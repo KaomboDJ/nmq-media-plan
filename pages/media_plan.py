@@ -580,43 +580,6 @@ with st.sidebar:
 
     selected_goals = list(goal_channels.keys())
 
-    st.markdown('---')
-    st.markdown(_step(7, 'Markets'), unsafe_allow_html=True)
-    selected_markets = st.multiselect(
-        'Markets', list(MARKET_LABELS.keys()), default=[],
-        format_func=lambda k: f'{k} — {MARKET_LABELS[k]}',
-        label_visibility='collapsed',
-        key='selected_markets',
-    )
-
-    st.markdown(_step(8, 'Total Budget (€)'), unsafe_allow_html=True)
-    grand_total_bud = st.number_input(
-        'Total', min_value=0, value=0, step=500, label_visibility='collapsed', key='total_budget'
-    )
-
-    st.markdown(_step(9, 'Market Split (%)'), unsafe_allow_html=True)
-    market_budgets, market_pcts = {}, {}
-    if selected_markets:
-        n_mkts = len(selected_markets)
-        for mkt in selected_markets:
-            default_pct = round(100.0 / n_mkts, 1)
-            c1, c2 = st.columns([3, 2])
-            pct = c1.number_input(
-                f'{mkt}', min_value=0.0, max_value=100.0,
-                value=default_pct, step=0.5, format='%.1f', key=f'pct_{mkt}'
-            )
-            market_pcts[mkt] = pct
-            market_budgets[mkt] = grand_total_bud * pct / 100
-            c2.metric(mkt, f'€{market_budgets[mkt]:,.0f}')
-
-        pct_sum = sum(market_pcts.values())
-        if abs(pct_sum - 100) > 0.5:
-            st.warning(f'Split: {pct_sum:.1f}% — adjust to 100%')
-        else:
-            st.success(f'✓ €{grand_total_bud:,} allocated')
-    else:
-        st.caption('Select markets above to set the split.')
-
     # ── Save / Load ───────────────────────────────────────────────────────────
     st.markdown('---')
     st.markdown('**💾 Save / Load Plan**')
@@ -666,11 +629,63 @@ all_scenarios_data = []  # collected for AI section and Compare tab
 
 
 def _render_scenario(sid):
-    """Render tables and funnels for one scenario tab (config comes from sidebar)."""
+    """Render per-scenario config (markets, budget, split) then tables and funnels."""
+
+    # ── Per-scenario config ───────────────────────────────────────────────────
+    cfg1, cfg2 = st.columns([4, 1])
+    with cfg1:
+        st.markdown('**Markets**')
+        s_markets = st.multiselect(
+            'Markets', list(MARKET_LABELS.keys()), default=[],
+            format_func=lambda k: f'{k} — {MARKET_LABELS[k]}',
+            label_visibility='collapsed',
+            key=f'selected_markets_{sid}',
+        )
+    with cfg2:
+        st.markdown('**Total Budget (€)**')
+        s_budget = st.number_input(
+            'Budget', min_value=0, value=0, step=500,
+            label_visibility='collapsed', key=f'total_budget_{sid}'
+        )
+
+    s_market_budgets, s_market_pcts = {}, {}
+    if s_markets:
+        n_mkts = len(s_markets)
+        default_pct = round(100.0 / n_mkts, 1)
+        st.markdown('**Market Split (%)**')
+        per_row = min(n_mkts, 4)
+        for row_start in range(0, n_mkts, per_row):
+            row_mkts = s_markets[row_start:row_start + per_row]
+            row_cols = st.columns(len(row_mkts) * 2)
+            for i, mkt in enumerate(row_mkts):
+                pct = row_cols[i * 2].number_input(
+                    f'{mkt}', min_value=0.0, max_value=100.0,
+                    value=default_pct, step=0.5, format='%.1f',
+                    key=f'pct_{mkt}_{sid}'
+                )
+                s_market_pcts[mkt] = pct
+                s_market_budgets[mkt] = s_budget * pct / 100
+                row_cols[i * 2 + 1].metric(mkt, f'€{s_market_budgets[mkt]:,.0f}')
+        pct_sum = sum(s_market_pcts.values())
+        if abs(pct_sum - 100) > 0.5:
+            st.warning(f'Split: {pct_sum:.1f}% — adjust to 100%')
+        else:
+            st.success(f'✓ €{s_budget:,} allocated')
+    else:
+        st.info('Select at least one market above to build the plan.')
+        return None
+
+    if not goal_channels:
+        st.info('Enable at least one goal and channel in the sidebar.')
+        return None
+
+    st.divider()
+
+    # ── Plan tables ───────────────────────────────────────────────────────────
     grand_totals = {g: {ch: [] for ch in chs} for g, chs in goal_channels.items()}
 
-    for mkt in selected_markets:
-        mkt_budget = market_budgets[mkt]
+    for mkt in s_markets:
+        mkt_budget = s_market_budgets[mkt]
         st.subheader(MARKET_LABELS[mkt])
 
         if len(selected_goals) > 1:
@@ -728,10 +743,10 @@ def _render_scenario(sid):
         'name': st.session_state.scenario_names[sid],
         'grand_totals': grand_totals,
         'goal_channels': goal_channels,
-        'selected_markets': selected_markets,
-        'market_budgets': market_budgets,
-        'market_pcts': market_pcts,
-        'grand_total_bud': grand_total_bud,
+        'selected_markets': s_markets,
+        'market_budgets': s_market_budgets,
+        'market_pcts': s_market_pcts,
+        'grand_total_bud': s_budget,
     }
 
 
@@ -742,12 +757,8 @@ for sid, s_tab in enumerate(scenario_tabs):
             if x_col.button('✕ Remove', key=f'remove_{sid}', help=f'Remove {st.session_state.scenario_names[sid]}'):
                 st.session_state.scenario_names.pop(sid)
                 st.rerun()
-        if not selected_markets:
-            st.info('Select at least one market in the sidebar to build the plan.')
-        elif not goal_channels:
-            st.info('Enable at least one goal and channel in the sidebar.')
-        else:
-            s_data = _render_scenario(sid)
+        s_data = _render_scenario(sid)
+        if s_data:
             all_scenarios_data.append(s_data)
             st.divider()
             xl_bytes = _build_excel(s_data, campaign_name, start_date, end_date, audience_type, industry)

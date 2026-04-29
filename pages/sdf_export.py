@@ -58,20 +58,20 @@ def _empty():
     return {c: '' for c in GADS_COLS}
 
 
-def _reconstruct_plan():
+def _reconstruct_plan(sid=0):
     """Pull plan config back from session state (set by the Media Plan page)."""
     ss = st.session_state
     campaign_name = ss.get('campaign_name', '')
     start_date    = ss.get('start_date')
     end_date      = ss.get('end_date')
-    markets       = ss.get('selected_markets', [])
-    total_budget  = ss.get('total_budget', 0)
+    markets       = ss.get(f'selected_markets_{sid}', [])
+    total_budget  = ss.get(f'total_budget_{sid}', 0)
 
     if not campaign_name or not start_date or not end_date or not markets:
         return None
 
     market_budgets = {
-        mkt: total_budget * ss.get(f'pct_{mkt}', 0) / 100
+        mkt: total_budget * ss.get(f'pct_{mkt}_{sid}', 0) / 100
         for mkt in markets
     }
 
@@ -115,10 +115,9 @@ def _channel_budgets(mkt, goal, channels, mkt_budget, sid=0):
     return {ch: mkt_budget * pcts[ch] / total for ch in channels}
 
 
-def _build_gads_csv(plan):
+def _build_gads_csv(plan, sid=0):
     ss   = st.session_state
     rows = []
-    sid  = 0
     start  = plan['start_date']
     end    = plan['end_date']
     days   = max((end - start).days + 1, 1)
@@ -188,10 +187,9 @@ def _build_gads_csv(plan):
     return buf.getvalue().encode('utf-8')
 
 
-def _preview_table(plan):
+def _preview_table(plan, sid=0):
     """Build a summary dataframe shown before download."""
     ss   = st.session_state
-    sid  = 0
     days = max((plan['end_date'] - plan['start_date']).days + 1, 1)
     rows = []
     for mkt in plan['markets']:
@@ -225,7 +223,14 @@ st.markdown(
 st.caption('Generate a Google Ads Editor CSV ready for bulk campaign upload.')
 st.divider()
 
-plan = _reconstruct_plan()
+scenario_names = st.session_state.get('scenario_names', [])
+if len(scenario_names) > 1:
+    selected_scenario = st.selectbox('Scenario to export', scenario_names, key='sdf_scenario_pick')
+    sid = scenario_names.index(selected_scenario)
+else:
+    sid = 0
+
+plan = _reconstruct_plan(sid)
 
 if plan is None:
     st.info(
@@ -256,7 +261,7 @@ with st.expander('Plan summary', expanded=True):
 
 # ── Campaign preview ──────────────────────────────────────────────────────────
 st.markdown('#### Campaigns to be created')
-preview_df = _preview_table(plan)
+preview_df = _preview_table(plan, sid)
 
 if preview_df.empty:
     st.warning('No Google Ads compatible channels found (YouTube or Search required).')
@@ -271,7 +276,7 @@ st.caption(
 
 # ── Download ──────────────────────────────────────────────────────────────────
 st.divider()
-csv_bytes = _build_gads_csv(plan)
+csv_bytes = _build_gads_csv(plan, sid)
 st.download_button(
     label='⬇ Download Google Ads Editor CSV',
     data=csv_bytes,
