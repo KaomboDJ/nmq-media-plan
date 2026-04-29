@@ -504,6 +504,101 @@ def _build_excel(s, campaign_name, start_date, end_date, audience_type, industry
     return buf.getvalue()
 
 
+# ── Google Ads CSV builder ────────────────────────────────────────────────────
+
+_MARKET_LANGUAGE = {
+    'AT': 'German', 'BE': 'French', 'BG': 'Bulgarian', 'HR': 'Croatian',
+    'CY': 'Greek', 'CZ': 'Czech', 'DK': 'Danish', 'EE': 'Estonian',
+    'FI': 'Finnish', 'FR': 'French', 'DE': 'German', 'GR': 'Greek',
+    'HU': 'Hungarian', 'IE': 'English', 'IT': 'Italian', 'LV': 'Latvian',
+    'LT': 'Lithuanian', 'LU': 'French', 'MT': 'English', 'NL': 'Dutch',
+    'NO': 'Norwegian', 'PL': 'Polish', 'PT': 'Portuguese', 'RO': 'Romanian',
+    'SK': 'Slovak', 'SI': 'Slovenian', 'ES': 'Spanish', 'SE': 'Swedish',
+    'CH': 'German', 'UK': 'English',
+}
+_GADS_TYPE = {'YouTube': 'Video', 'Search': 'Search'}
+_GADS_BID = {
+    ('YouTube', 'Awareness'):  'Target CPM',
+    ('YouTube', 'Traffic'):    'Maximize conversions',
+    ('YouTube', 'Conversion'): 'Target CPA',
+    ('Search',  'Awareness'):  'Manual CPC',
+    ('Search',  'Traffic'):    'Maximize clicks',
+    ('Search',  'Conversion'): 'Target CPA',
+}
+_GADS_COLS = [
+    'Campaign', 'Campaign Status', 'Campaign Type',
+    'Budget', 'Budget Type',
+    'Bid Strategy Type', 'Target CPA', 'Target CPM',
+    'Start Date', 'End Date',
+    'Location', 'Location Type',
+    'Language', 'Language Type',
+    'Ad Group', 'Ad Group Status', 'Default Max. CPC',
+]
+
+
+def _build_gads_csv_scenario(s_data, sid, campaign_name, start_date, end_date):
+    """Build a Google Ads Editor CSV directly from a rendered scenario's data."""
+    ss   = st.session_state
+    days = max((end_date - start_date).days + 1, 1)
+    s_dt = start_date.strftime('%m/%d/%Y')
+    e_dt = end_date.strftime('%m/%d/%Y')
+    rows = []
+
+    def _empty():
+        return {c: '' for c in _GADS_COLS}
+
+    for mkt in s_data['selected_markets']:
+        mkt_budget = s_data['market_budgets'][mkt]
+        for goal, channels in s_data['goal_channels'].items():
+            gads_chs = [ch for ch in channels if ch in _GADS_TYPE]
+            if not gads_chs:
+                continue
+
+            if len(gads_chs) == 1:
+                ch_buds = {gads_chs[0]: mkt_budget}
+            elif len(gads_chs) == 2:
+                pct_a = ss.get(f'split_{mkt}_{goal}_{sid}', 50)
+                ch_buds = {
+                    gads_chs[0]: mkt_budget * pct_a / 100,
+                    gads_chs[1]: mkt_budget * (100 - pct_a) / 100,
+                }
+            else:
+                pcts = {ch: ss.get(f'split_{mkt}_{goal}_{ch}_{sid}', 100 / len(gads_chs)) for ch in gads_chs}
+                total = sum(pcts.values()) or 1
+                ch_buds = {ch: mkt_budget * pcts[ch] / total for ch in gads_chs}
+
+            for ch in gads_chs:
+                daily      = round(ch_buds[ch] / days, 2)
+                name       = f'{campaign_name}_{mkt}_{goal}_{ch}'
+                bid        = _GADS_BID.get((ch, goal), 'Manual CPC')
+                target_cpm = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', '') if ch == 'YouTube' else ''
+                default_cpc = ss.get(f'cpc_{mkt}_{ch}_{goal}_{sid}', '') if ch == 'Search' else ''
+
+                r = _empty()
+                r.update({'Campaign': name, 'Campaign Status': 'Enabled',
+                          'Campaign Type': _GADS_TYPE[ch], 'Budget': daily,
+                          'Budget Type': 'Daily', 'Bid Strategy Type': bid,
+                          'Target CPM': target_cpm, 'Start Date': s_dt, 'End Date': e_dt})
+                rows.append(r)
+
+                r = _empty()
+                r.update({'Campaign': name, 'Location': MARKET_LABELS[mkt], 'Location Type': 'Location'})
+                rows.append(r)
+
+                r = _empty()
+                r.update({'Campaign': name, 'Language': _MARKET_LANGUAGE.get(mkt, 'English'), 'Language Type': 'Language'})
+                rows.append(r)
+
+                r = _empty()
+                r.update({'Campaign': name, 'Ad Group': f'{name}_AdGroup_01',
+                          'Ad Group Status': 'Enabled', 'Default Max. CPC': default_cpc})
+                rows.append(r)
+
+    buf = io.StringIO()
+    pd.DataFrame(rows, columns=_GADS_COLS).to_csv(buf, index=False)
+    return buf.getvalue().encode('utf-8')
+
+
 # ── Step label helper ─────────────────────────────────────────────────────────
 def _step(n, label):
     return (
@@ -758,13 +853,24 @@ for sid, s_tab in enumerate(scenario_tabs):
         if s_data:
             all_scenarios_data.append(s_data)
             st.divider()
+            dl1, dl2 = st.columns(2)
             xl_bytes = _build_excel(s_data, campaign_name, start_date, end_date, audience_type, industry)
-            st.download_button(
-                label=f'⬇ Download {s_data["name"]} as Excel',
+            dl1.download_button(
+                label=f'⬇ Excel — {s_data["name"]}',
                 data=xl_bytes,
                 file_name=f'{campaign_name.replace(" ", "_")}_{s_data["name"].replace(" ", "_")}.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 key=f'dl_excel_{sid}',
+                use_container_width=True,
+            )
+            gads_bytes = _build_gads_csv_scenario(s_data, sid, campaign_name, start_date, end_date)
+            dl2.download_button(
+                label=f'⬇ Google Ads CSV — {s_data["name"]}',
+                data=gads_bytes,
+                file_name=f'{campaign_name.replace(" ", "_")}_{s_data["name"].replace(" ", "_")}_google_ads.csv',
+                mime='text/csv',
+                key=f'dl_gads_{sid}',
+                use_container_width=True,
             )
 
 
