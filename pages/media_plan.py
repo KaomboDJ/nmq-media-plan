@@ -554,32 +554,6 @@ with st.sidebar:
     breakdown = st.selectbox('Breakdown', ['Daily', 'Weekly', 'Bi-Weekly', 'Monthly'],
                              index=1, label_visibility='collapsed', key='breakdown')
 
-    st.markdown('---')
-    st.markdown(_step(6, 'Goals & Channels'), unsafe_allow_html=True)
-    st.caption('Tick which channels apply to each goal.')
-    hc = st.columns([2, 1, 1, 1])
-    hc[1].markdown('<small>YT</small>', unsafe_allow_html=True)
-    hc[2].markdown('<small>Search</small>', unsafe_allow_html=True)
-    hc[3].markdown('<small>LinkedIn</small>', unsafe_allow_html=True)
-
-    goal_channels = {}
-    for goal_key in ['Awareness', 'Traffic', 'Conversion']:
-        rc = st.columns([2, 1, 1, 1])
-        goal_on = rc[0].checkbox(goal_key, value=False, key=f'sb_goal_{goal_key}')
-        yt_on = rc[1].checkbox('YT', value=False, key=f'sb_yt_{goal_key}', label_visibility='collapsed', disabled=not goal_on)
-        s_on  = rc[2].checkbox('S',  value=False, key=f'sb_s_{goal_key}',  label_visibility='collapsed', disabled=not goal_on)
-        li_on = rc[3].checkbox('LI', value=False, key=f'sb_li_{goal_key}', label_visibility='collapsed', disabled=not goal_on)
-        if goal_on:
-            chs = [ch for ch, on in [('YouTube', yt_on), ('Search', s_on), ('LinkedIn', li_on)] if on]
-            if chs:
-                goal_channels[goal_key] = chs
-
-    if not goal_channels:
-        st.warning('Select at least one goal + channel.')
-        st.stop()
-
-    selected_goals = list(goal_channels.keys())
-
     # ── Save / Load ───────────────────────────────────────────────────────────
     st.markdown('---')
     st.markdown('**💾 Save / Load Plan**')
@@ -629,9 +603,36 @@ all_scenarios_data = []  # collected for AI section and Compare tab
 
 
 def _render_scenario(sid):
-    """Render per-scenario config (markets, budget, split) then tables and funnels."""
+    """Render per-scenario config (goals, channels, markets, budget, split) then tables and funnels."""
 
-    # ── Per-scenario config ───────────────────────────────────────────────────
+    # ── Goals & Channels ─────────────────────────────────────────────────────
+    st.markdown('**Goals & Channels**')
+    st.caption('Tick which channels apply to each goal for this scenario.')
+    hc = st.columns([2, 1, 1, 1])
+    hc[1].markdown('<small>YT</small>', unsafe_allow_html=True)
+    hc[2].markdown('<small>Search</small>', unsafe_allow_html=True)
+    hc[3].markdown('<small>LinkedIn</small>', unsafe_allow_html=True)
+
+    goal_channels = {}
+    for goal_key in ALL_GOALS:
+        rc = st.columns([2, 1, 1, 1])
+        goal_on = rc[0].checkbox(goal_key, value=False, key=f'sb_goal_{goal_key}_{sid}')
+        yt_on = rc[1].checkbox('YT', value=False, key=f'sb_yt_{goal_key}_{sid}', label_visibility='collapsed', disabled=not goal_on)
+        s_on  = rc[2].checkbox('S',  value=False, key=f'sb_s_{goal_key}_{sid}',  label_visibility='collapsed', disabled=not goal_on)
+        li_on = rc[3].checkbox('LI', value=False, key=f'sb_li_{goal_key}_{sid}', label_visibility='collapsed', disabled=not goal_on)
+        if goal_on:
+            chs = [ch for ch, on in [('YouTube', yt_on), ('Search', s_on), ('LinkedIn', li_on)] if on]
+            if chs:
+                goal_channels[goal_key] = chs
+
+    if not goal_channels:
+        st.info('Select at least one goal and channel above.')
+        return None
+
+    selected_goals = list(goal_channels.keys())
+    st.divider()
+
+    # ── Markets & Budget ─────────────────────────────────────────────────────
     cfg1, cfg2 = st.columns([4, 1])
     with cfg1:
         st.markdown('**Markets**')
@@ -673,10 +674,6 @@ def _render_scenario(sid):
             st.success(f'✓ €{s_budget:,} allocated')
     else:
         st.info('Select at least one market above to build the plan.')
-        return None
-
-    if not goal_channels:
-        st.info('Enable at least one goal and channel in the sidebar.')
         return None
 
     st.divider()

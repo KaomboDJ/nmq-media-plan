@@ -77,11 +77,11 @@ def _reconstruct_plan(sid=0):
 
     goal_channels = {}
     for goal in ['Awareness', 'Traffic', 'Conversion']:
-        if ss.get(f'sb_goal_{goal}', False):
+        if ss.get(f'sb_goal_{goal}_{sid}', False):
             chs = []
-            if ss.get(f'sb_yt_{goal}', False):  chs.append('YouTube')
-            if ss.get(f'sb_s_{goal}',  False):  chs.append('Search')
-            if ss.get(f'sb_li_{goal}', False):  chs.append('LinkedIn')
+            if ss.get(f'sb_yt_{goal}_{sid}', False):  chs.append('YouTube')
+            if ss.get(f'sb_s_{goal}_{sid}',  False):  chs.append('Search')
+            if ss.get(f'sb_li_{goal}_{sid}', False):  chs.append('LinkedIn')
             if chs:
                 goal_channels[goal] = chs
 
