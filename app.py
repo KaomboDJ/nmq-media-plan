@@ -1,21 +1,80 @@
-"""Media Plan Tool — Streamlit."""
+"""NMQ Media Plan Generator — Streamlit."""
 import calendar
+import io
+import json
 import os
 from datetime import date, timedelta
 
+import openpyxl
+from openpyxl.styles import Alignment, Font, PatternFill
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import toml
 
-st.set_page_config(page_title='Media Plan Tool', layout='wide', initial_sidebar_state='expanded')
+st.set_page_config(
+    page_title='NMQ Media Plan Generator',
+    page_icon='https://nmqdigital.com/hs-fs/hubfs/raw_assets/public/NMQ-Digital/images/NMQ_Green_Logo.png',
+    layout='wide',
+    initial_sidebar_state='expanded',
+)
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem; }
-    h3 { color: #1F497D; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    .block-container { padding-top: 1.2rem; }
+
+    /* NMQ teal accent on headings */
+    h3 { color: #2BB5A5; }
+
+    /* Primary buttons */
+    div.stButton > button[kind="primary"],
+    div.stButton > button {
+        background-color: #2BB5A5;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        transition: background 0.2s;
+    }
+    div.stButton > button:hover {
+        background-color: #229990;
+        color: white;
+    }
+
+    /* Download button */
+    div.stDownloadButton > button {
+        background-color: #1A1A1A;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        transition: background 0.2s;
+    }
+    div.stDownloadButton > button:hover {
+        background-color: #2BB5A5;
+        color: white;
+    }
+
+    /* Metric labels */
     div[data-testid="stMetric"] label { font-size: 0.75rem; }
+
+    /* Sidebar title */
+    .nmq-sidebar-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .nmq-sidebar-logo img { height: 32px; }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Apply pending plan load (must run before any widgets render) ──────────────
+if '_pending_load' in st.session_state:
+    _load_data = st.session_state.pop('_pending_load')
+    for k, v in _load_data.items():
+        if isinstance(v, dict) and '__date__' in v:
+            st.session_state[k] = date.fromisoformat(v['__date__'])
+        else:
+            st.session_state[k] = v
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -409,14 +468,122 @@ def render_goal_section(mkt, goal, selected_channels, ch_budgets, periods, grand
         grand_totals[goal][ch].append(t_row)
 
 
+# ── Save / Load helpers ───────────────────────────────────────────────────────
+
+_SKIP_KEYS = {'_pending_load', 'FormSubmitter'}
+
+def _serialise_state():
+    data = {'scenario_names': st.session_state.get('scenario_names', ['Scenario 1'])}
+    for k, v in st.session_state.items():
+        if any(k.startswith(s) for s in _SKIP_KEYS):
+            continue
+        if isinstance(v, date):
+            data[k] = {'__date__': v.isoformat()}
+        elif isinstance(v, (str, int, float, bool, list)):
+            data[k] = v
+    return json.dumps(data, indent=2).encode('utf-8')
+
+
+# ── Excel builder ─────────────────────────────────────────────────────────────
+
+_NMQ_TEAL   = '2BB5A5'
+_NMQ_BLACK  = '1A1A1A'
+_NMQ_LIGHT  = 'F5F7F7'
+
+def _xl_header(ws, row_num):
+    fill = PatternFill('solid', fgColor=_NMQ_TEAL)
+    font = Font(bold=True, color='FFFFFF', name='Calibri')
+    for cell in ws[row_num]:
+        if cell.value is not None:
+            cell.fill = fill
+            cell.font = font
+            cell.alignment = Alignment(horizontal='center')
+
+
+def _build_excel(s, campaign_name, start_date, end_date, audience_type, industry):
+    wb = openpyxl.Workbook()
+
+    # ── Config sheet ──────────────────────────────────────────────────────────
+    ws_cfg = wb.active
+    ws_cfg.title = 'Config'
+    cfg_rows = [
+        ('Campaign Name', campaign_name),
+        ('Scenario', s['name']),
+        ('Audience Type', audience_type),
+        ('Industry', industry),
+        ('Start Date', start_date.strftime('%b %d, %Y')),
+        ('End Date', end_date.strftime('%b %d, %Y')),
+        ('Total Budget (€)', s['grand_total_bud']),
+        ('', ''),
+        ('Market', 'Budget (€)', 'Share (%)'),
+    ]
+    for row in cfg_rows:
+        ws_cfg.append(list(row))
+    _xl_header(ws_cfg, 9)
+    for mkt in s['selected_markets']:
+        ws_cfg.append([MARKET_LABELS[mkt], round(s['market_budgets'][mkt], 2), round(s['market_pcts'][mkt], 1)])
+    ws_cfg.column_dimensions['A'].width = 26
+    ws_cfg.column_dimensions['B'].width = 20
+    ws_cfg.column_dimensions['C'].width = 14
+
+    # ── KPI Summary sheet ─────────────────────────────────────────────────────
+    ws_sum = wb.create_sheet('KPI Summary')
+    sum_headers = ['Goal', 'Channel'] + [COL_FMT[c][0] for c in ADDITIVE if c in COL_FMT]
+    ws_sum.append(sum_headers)
+    _xl_header(ws_sum, 1)
+    for goal, chs in s['grand_totals'].items():
+        for ch, rows in chs.items():
+            if not rows:
+                continue
+            gdf = pd.concat(rows, ignore_index=True)
+            row = [goal, ch]
+            for col in ADDITIVE:
+                row.append(round(gdf[col].sum(), 0) if col in gdf.columns else 0)
+            ws_sum.append(row)
+    for i, col in enumerate(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'], 1):
+        ws_sum.column_dimensions[col].width = 18
+
+    # ── Per goal+channel sheets ───────────────────────────────────────────────
+    for goal, chs in s['grand_totals'].items():
+        for ch, rows in chs.items():
+            if not rows:
+                continue
+            gdf = pd.concat(rows, ignore_index=True)
+            sheet_name = f'{goal[:9]}_{ch[:7]}'[:31]
+            ws = wb.create_sheet(sheet_name)
+            raw_cols = ['Market', 'Period', 'Days'] + [c for c in ADDITIVE if c in gdf.columns]
+            display_cols = ['Market', 'Period', 'Days'] + [COL_FMT[c][0] for c in ADDITIVE if c in gdf.columns]
+            ws.append(display_cols)
+            _xl_header(ws, 1)
+            for _, r in gdf[raw_cols].iterrows():
+                ws.append([round(r[c], 0) if isinstance(r.get(c), float) else r.get(c, '') for c in raw_cols])
+            ws.column_dimensions['A'].width = 20
+            ws.column_dimensions['B'].width = 20
+            for col_letter in ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']:
+                ws.column_dimensions[col_letter].width = 16
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ── Sidebar (global settings only) ───────────────────────────────────────────
 with st.sidebar:
-    st.markdown('## NMQ Media Plan Generator')
+    st.markdown(
+        '<div class="nmq-sidebar-logo">'
+        '<img src="https://nmqdigital.com/hs-fs/hubfs/raw_assets/public/NMQ-Digital/images/NMQ_Green_Logo.png">'
+        '<span style="font-weight:700;font-size:0.9rem;color:#1A1A1A">Media Plan Generator</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('---')
 
-    campaign_name = st.text_input('Campaign Name', value='Campaign — 2026')
+    campaign_name = st.text_input('Campaign Name', value='Campaign — 2026', key='campaign_name')
 
     st.markdown('**Audience Type**')
-    audience_type = st.radio('Audience', ['B2B', 'B2C'], horizontal=True, label_visibility='collapsed')
+    audience_type = st.radio('Audience', ['B2B', 'B2C'], horizontal=True,
+                             label_visibility='collapsed', key='audience_type')
 
     st.markdown('**Industry**')
     INDUSTRIES_SB = [
@@ -429,13 +596,13 @@ with st.sidebar:
         'Mobility, Travel & Automotive',
         'Information Services & Professional Platforms',
     ]
-    industry = st.selectbox('Industry', INDUSTRIES_SB, label_visibility='collapsed')
+    industry = st.selectbox('Industry', INDUSTRIES_SB, label_visibility='collapsed', key='industry')
 
     st.markdown('---')
     st.markdown('**Flight Dates**')
     col_s, col_e = st.columns(2)
-    start_date = col_s.date_input('Start', value=date(2026, 5, 12))
-    end_date   = col_e.date_input('End',   value=date(2026, 6, 29))
+    start_date = col_s.date_input('Start', value=date(2026, 5, 12), key='start_date')
+    end_date   = col_e.date_input('End',   value=date(2026, 6, 29), key='end_date')
 
     if end_date <= start_date:
         st.error('End must be after Start.')
@@ -446,7 +613,7 @@ with st.sidebar:
     st.markdown('---')
     st.markdown('**Period Breakdown**')
     breakdown = st.selectbox('Breakdown', ['Daily', 'Weekly', 'Bi-Weekly', 'Monthly'],
-                             index=1, label_visibility='collapsed')
+                             index=1, label_visibility='collapsed', key='breakdown')
 
     st.markdown('---')
     st.markdown('**Goals & Channels**')
@@ -480,6 +647,7 @@ with st.sidebar:
         'Markets', list(MARKET_LABELS.keys()), default=[],
         format_func=lambda k: f'{k} — {MARKET_LABELS[k]}',
         label_visibility='collapsed',
+        key='selected_markets',
     )
     st.markdown('**Total Budget (€)**')
     grand_total_bud = st.number_input(
@@ -509,10 +677,37 @@ with st.sidebar:
     else:
         st.caption('Select markets above to set the split.')
 
+    # ── Save / Load ───────────────────────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('**💾 Save / Load Plan**')
+    st.download_button(
+        label='Download plan (.json)',
+        data=_serialise_state(),
+        file_name=f'{campaign_name.replace(" ", "_")}_plan.json',
+        mime='application/json',
+        use_container_width=True,
+    )
+    uploaded = st.file_uploader('Load plan (.json)', type='json', label_visibility='collapsed')
+    if uploaded is not None:
+        try:
+            payload = json.loads(uploaded.read().decode('utf-8'))
+            st.session_state['_pending_load'] = payload
+            st.rerun()
+        except Exception as e:
+            st.error(f'Could not load plan: {e}')
+
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-st.title('NMQ Media Plan Generator')
-st.caption(f'{campaign_name}  ·  {start_date.strftime("%b %d, %Y")} – {end_date.strftime("%b %d, %Y")}  ·  {breakdown}')
+logo_col, title_col = st.columns([1, 8])
+with logo_col:
+    st.image('https://nmqdigital.com/hs-fs/hubfs/raw_assets/public/NMQ-Digital/images/NMQ_Green_Logo.png', width=100)
+with title_col:
+    st.markdown(
+        '<h1 style="margin:0;padding-top:6px;font-family:Inter,sans-serif;'
+        'font-size:1.8rem;color:#1A1A1A">Media Plan Generator</h1>',
+        unsafe_allow_html=True,
+    )
+    st.caption(f'{campaign_name}  ·  {start_date.strftime("%b %d, %Y")} – {end_date.strftime("%b %d, %Y")}  ·  {breakdown}')
 st.divider()
 
 # Scenario management via session state
@@ -616,7 +811,17 @@ for sid, s_tab in enumerate(scenario_tabs):
         elif not goal_channels:
             st.info('Enable at least one goal and channel in the sidebar.')
         else:
-            all_scenarios_data.append(_render_scenario(sid))
+            s_data = _render_scenario(sid)
+            all_scenarios_data.append(s_data)
+            st.divider()
+            xl_bytes = _build_excel(s_data, campaign_name, start_date, end_date, audience_type, industry)
+            st.download_button(
+                label=f'⬇ Download {s_data["name"]} as Excel',
+                data=xl_bytes,
+                file_name=f'{campaign_name.replace(" ", "_")}_{s_data["name"].replace(" ", "_")}.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                key=f'dl_excel_{sid}',
+            )
 
 
 # ── Compare tab (only when 2+ scenarios) ─────────────────────────────────────
