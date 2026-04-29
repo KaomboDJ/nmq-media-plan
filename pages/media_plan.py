@@ -1053,22 +1053,27 @@ Be direct. No bullet points within sections."""
 
 with ai_tab_benchmarks:
     st.caption('Plain-English explanations of the benchmark values used in this plan.')
+
+    def _bench_context():
+        """Build a reusable benchmark context block for AI prompts."""
+        bench_lines = []
+        for mkt in (ai_data['selected_markets'] if ai_data else []):
+            for goal, chs in (ai_data['goal_channels'].items() if ai_data else []):
+                for ch in chs:
+                    b = BENCH[mkt][ch]
+                    if ch == 'Search':
+                        bench_lines.append(f'{MARKET_LABELS[mkt]} / {ch}: CPC €{b["cpc"]:.2f}, CTR {b["ctr"]*100:.1f}%, Click→Session {b.get("click_to_session",0.85)*100:.0f}%')
+                    else:
+                        bench_lines.append(f'{MARKET_LABELS[mkt]} / {ch}: CPM €{b["cpm"]:.2f}, CTR {b["ctr"]*100:.2f}%, Freq {b.get("frequency",3.0):.1f}' + (f', View Rate {b.get("view_rate",0.31)*100:.0f}%' if ch == 'YouTube' else ''))
+        channels_in_use = sorted({ch for chs in (ai_data['goal_channels'].values() if ai_data else []) for ch in chs})
+        return bench_lines, channels_in_use
+
     if st.button('Generate Benchmark Explanations', key='btn_bench'):
         api_key = get_api_key()
         if not api_key:
             st.error('No API key found in .streamlit/secrets.toml')
         else:
-            bench_lines = []
-            for mkt in (ai_data['selected_markets'] if ai_data else []):
-                for goal, chs in (ai_data['goal_channels'].items() if ai_data else []):
-                    for ch in chs:
-                        b = BENCH[mkt][ch]
-                        if ch == 'Search':
-                            bench_lines.append(f'{MARKET_LABELS[mkt]} / {ch}: CPC €{b["cpc"]:.2f}, CTR {b["ctr"]*100:.1f}%, Click→Session {b.get("click_to_session",0.85)*100:.0f}%')
-                        else:
-                            bench_lines.append(f'{MARKET_LABELS[mkt]} / {ch}: CPM €{b["cpm"]:.2f}, CTR {b["ctr"]*100:.2f}%, Freq {b.get("frequency",3.0):.1f}' + (f', View Rate {b.get("view_rate",0.31)*100:.0f}%' if ch == 'YouTube' else ''))
-
-            channels_in_use = sorted({ch for chs in (ai_data['goal_channels'].values() if ai_data else []) for ch in chs})
+            bench_lines, channels_in_use = _bench_context()
             prompt = f"""You are a senior paid media strategist explaining benchmark values to a {audience_type} client in the {industry} sector.
 
 The plan uses these channels: {', '.join(channels_in_use) if channels_in_use else 'various digital channels'}.
@@ -1091,3 +1096,47 @@ Write in plain English. No jargon. One paragraph per topic. Frame everything for
                     messages=[{'role': 'user', 'content': prompt}]
                 )
             st.markdown(msg.content[0].text)
+
+    st.divider()
+    st.markdown('#### Ask a question about the benchmarks')
+    st.caption('Ask anything — why a market costs more, whether a CTR looks realistic, what to adjust for your industry, etc.')
+    bench_question = st.text_area(
+        'Your question',
+        placeholder='e.g. Why is the CPM in Germany higher than in Poland? Should I adjust the view rate for a B2B audience?',
+        key='bench_question',
+        label_visibility='collapsed',
+        height=90,
+    )
+    if st.button('Ask AI', key='btn_bench_ask'):
+        if not bench_question.strip():
+            st.warning('Type a question first.')
+        else:
+            api_key = get_api_key()
+            if not api_key:
+                st.error('No API key found in .streamlit/secrets.toml')
+            else:
+                bench_lines, channels_in_use = _bench_context()
+                ask_prompt = f"""You are a senior paid media strategist advising a {audience_type} client in the {industry} sector.
+
+The plan uses these channels: {', '.join(channels_in_use) if channels_in_use else 'various digital channels'}.
+
+Benchmarks in use:
+{chr(10).join(bench_lines)}
+
+The client's question:
+{bench_question.strip()}
+
+Answer in 100–150 words. Be direct and practical. Reference the actual benchmark numbers where relevant. Frame everything for a {audience_type} {industry} context. No bullet points — plain paragraphs, like a strategist talking to a client."""
+                import anthropic as _anthropic
+                client = _anthropic.Anthropic(api_key=api_key)
+                with st.spinner('Thinking...'):
+                    msg = client.messages.create(
+                        model='claude-haiku-4-5-20251001',
+                        max_tokens=350,
+                        messages=[{'role': 'user', 'content': ask_prompt}]
+                    )
+                st.markdown(
+                    f'<div style="background:#f0faf9;border-left:3px solid #2BB5A5;padding:12px 14px;'
+                    f'border-radius:0 4px 4px 0;margin-top:8px">{msg.content[0].text}</div>',
+                    unsafe_allow_html=True,
+                )
