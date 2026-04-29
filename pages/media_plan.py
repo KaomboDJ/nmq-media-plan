@@ -629,67 +629,351 @@ def _xl_header(ws, row_num):
             cell.alignment = Alignment(horizontal='center')
 
 
-def _build_excel(s, campaign_name, start_date, end_date, audience_type, industry):
+def _get_bm_ss(ch, mkt, goal, sid):
+    """Read benchmark values from session state (mirrors benchmark_inputs without rendering)."""
+    ss = st.session_state
+    b = BENCH[mkt][ch]
+    bm = {}
+    if ch == 'Search':
+        bm['cpc'] = ss.get(f'cpc_{mkt}_{ch}_{goal}_{sid}', b['cpc'])
+        bm['ctr'] = ss.get(f'ctr_{mkt}_{ch}_{goal}_{sid}', b['ctr'] * 100) / 100
+        bm['click_to_session'] = ss.get(f'click_to_session_{mkt}_{ch}_{goal}_{sid}',
+                                        b.get('click_to_session', 0.85) * 100) / 100
+        bm['conv_rate'] = ss.get(f'conv_rate_{mkt}_{ch}_{goal}_{sid}',
+                                 b.get('conv_rate', 0.03) * 100) / 100
+    elif ch == 'YouTube':
+        bm['cpm'] = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
+        bm['ctr'] = ss.get(f'ctr_{mkt}_{ch}_{goal}_{sid}', b['ctr'] * 100) / 100
+        bm['frequency'] = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
+        if goal == 'Awareness':
+            bm['view_rate'] = ss.get(f'view_rate_{mkt}_{ch}_{goal}_{sid}',
+                                     b.get('view_rate', 0.31) * 100) / 100
+        else:
+            bm['view_rate'] = b.get('view_rate', 0.31)
+        bm['click_to_session'] = ss.get(f'click_to_session_{mkt}_{ch}_{goal}_{sid}',
+                                        b.get('click_to_session', 0.80) * 100) / 100
+        bm['conv_rate'] = ss.get(f'conv_rate_{mkt}_{ch}_{goal}_{sid}',
+                                 b.get('conv_rate', 0.02) * 100) / 100
+    else:  # LinkedIn
+        bm['cpm'] = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
+        bm['ctr'] = ss.get(f'ctr_{mkt}_{ch}_{goal}_{sid}', b['ctr'] * 100) / 100
+        bm['frequency'] = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
+        bm['click_to_session'] = ss.get(f'click_to_session_{mkt}_{ch}_{goal}_{sid}',
+                                        b.get('click_to_session', 0.82) * 100) / 100
+        bm['conv_rate'] = ss.get(f'conv_rate_{mkt}_{ch}_{goal}_{sid}',
+                                 b.get('conv_rate', 0.02) * 100) / 100
+    return bm
+
+
+def _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid):
+    """Read channel budget splits from session state without rendering UI."""
+    ss = st.session_state
+    if len(goal_chs) == 1:
+        return {goal_chs[0]: mkt_budget}
+    if len(goal_chs) == 2:
+        ch_a, ch_b = goal_chs
+        pct_a = ss.get(f'split_{mkt}_{goal}_{sid}', 50)
+        return {ch_a: mkt_budget * pct_a / 100, ch_b: mkt_budget * (100 - pct_a) / 100}
+    default_pct = round(100 / len(goal_chs), 1)
+    pcts = {ch: ss.get(f'split_{mkt}_{goal}_{ch}_{sid}', default_pct) for ch in goal_chs}
+    pct_sum = sum(pcts.values()) or 1
+    return {ch: mkt_budget * pcts[ch] / pct_sum for ch in goal_chs}
+
+
+def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end_date):
+    """Build one Excel workbook with one tab per scenario, styled like the estimations template."""
+    from openpyxl.styles import Border, Side
+    from openpyxl.utils import get_column_letter
+
+    # ── Colour palette ────────────────────────────────────────────────────────
+    C_TITLE   = PatternFill('solid', fgColor='437CA3')   # dark blue — title/market headers
+    C_COLS    = PatternFill('solid', fgColor='C6C04E')   # gold — column headers
+    C_INPUT   = PatternFill('solid', fgColor='FFF1CC')  # light yellow — benchmark inputs
+    C_CALC    = PatternFill('solid', fgColor='FFFFFF')   # white — calculated cells
+    C_TOTAL   = PatternFill('solid', fgColor='CFE1F3')   # light blue — total row
+    C_F0      = PatternFill('solid', fgColor='1F497D')   # funnel: Budget
+    C_F1      = PatternFill('solid', fgColor='437CA3')   # funnel: Impressions
+    C_F2      = PatternFill('solid', fgColor='6A98BA')   # funnel: Reach
+    C_F3      = PatternFill('solid', fgColor='92B5D1')   # funnel: Views/Clicks (3rd)
+    C_F4      = PatternFill('solid', fgColor='BAD2E8')   # funnel: Clicks/Sessions (4th)
+    C_F5      = PatternFill('solid', fgColor='D6E8F4')   # funnel: Conversions (5th)
+
+    F_WHITE   = Font(color='FFFFFF', bold=True)
+    F_BOLD    = Font(bold=True)
+    F_NORMAL  = Font()
+    ALIGN_C   = Alignment(horizontal='center', vertical='center')
+    ALIGN_L   = Alignment(horizontal='left',   vertical='center')
+    ALIGN_R   = Alignment(horizontal='right',  vertical='center')
+
+    def _fmt_num(v, decimals=0):
+        if v is None or (isinstance(v, float) and (v != v)):
+            return '-'
+        if decimals == 0:
+            return round(float(v))
+        return round(float(v), decimals)
+
+    def _pct(v):
+        if not v:
+            return '-'
+        return f'{v * 100:.2f}%'
+
+    def _cols_for(ch, goal):
+        """Return list of (header, data_key, is_input, decimals) tuples."""
+        base = [
+            ('Period',    'Period',  False, None),
+            ('Days',      'Days',    False, 0),
+            ('Budget (€)', 'Budget', False, 2),
+        ]
+        if ch == 'Search':
+            cols = base + [
+                ('CPC (€)',    'cpc',         True,  2),
+                ('CTR',        'ctr',         True,  None),   # formatted as %
+                ('Impressions','impressions',  False, 0),
+                ('Clicks',     'clicks',       False, 0),
+            ]
+            if goal in ('Traffic', 'Conversion'):
+                cols += [('Sessions', 'sessions', False, 0)]
+            if goal == 'Conversion':
+                cols += [('Conversions', 'conversions', False, 0),
+                         ('CPA (€)',     'cpa',         False, 2)]
+        elif ch == 'YouTube' and goal == 'Awareness':
+            cols = base + [
+                ('CPM (€)',    'cpm',         True,  2),
+                ('Impressions','impressions',  False, 0),
+                ('View Rate',  'view_rate',   True,  None),
+                ('Views',      'views',        False, 0),
+                ('CPV (€)',    'cpv',          False, 2),
+                ('CTR',        'ctr',         True,  None),
+                ('Clicks',     'clicks',       False, 0),
+                ('CPC (€)',    'cpc',          False, 2),
+                ('Frequency',  'frequency',   True,  1),
+                ('Reach',      'reach',        False, 0),
+            ]
+        else:  # YouTube Traffic/Conversion or LinkedIn any goal
+            cols = base + [
+                ('CPM (€)',    'cpm',         True,  2),
+                ('Impressions','impressions',  False, 0),
+                ('CTR',        'ctr',         True,  None),
+                ('Clicks',     'clicks',       False, 0),
+                ('CPC (€)',    'cpc',          False, 2),
+                ('Frequency',  'frequency',   True,  1),
+                ('Reach',      'reach',        False, 0),
+            ]
+            if goal in ('Traffic', 'Conversion'):
+                cols += [('Sessions', 'sessions', False, 0)]
+            if goal == 'Conversion':
+                cols += [('Conversions', 'conversions', False, 0),
+                         ('CPA (€)',     'cpa',         False, 2)]
+        return cols
+
+    def _funnel_stages(ch, goal):
+        """Return (label, data_key, fill) tuples for the funnel block."""
+        stages = [
+            ('Budget',       'Budget',      C_F0),
+            ('Impressions',  'impressions', C_F1),
+        ]
+        if ch in ('YouTube', 'LinkedIn'):
+            stages.append(('Reach', 'reach', C_F2))
+        if ch == 'YouTube' and goal == 'Awareness':
+            stages.append(('Views',  'views',  C_F3))
+            stages.append(('Clicks', 'clicks', C_F4))
+        else:
+            stages.append(('Clicks', 'clicks', C_F3))
+        if goal in ('Traffic', 'Conversion'):
+            stages.append(('Sessions', 'sessions', C_F4 if ch == 'Search' else C_F5))
+        if goal == 'Conversion':
+            stages.append(('Conversions', 'conversions', C_F5))
+        return stages
+
+    def _write_row(ws, row_idx, values, fills, font=None, number_format=None):
+        for col_idx, (val, fill) in enumerate(zip(values, fills), 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.fill = fill
+            cell.font = font or F_NORMAL
+            cell.alignment = ALIGN_C
+
+    def _write_title_row(ws, row_idx, text, n_cols):
+        cell = ws.cell(row=row_idx, column=1, value=text)
+        cell.fill = C_TITLE
+        cell.font = Font(color='FFFFFF', bold=True, size=12)
+        cell.alignment = ALIGN_L
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=n_cols)
+        ws.row_dimensions[row_idx].height = 18
+
+    def _write_section_header(ws, row_idx, text, n_cols):
+        cell = ws.cell(row=row_idx, column=1, value=text)
+        cell.fill = C_TITLE
+        cell.font = Font(color='FFFFFF', bold=True)
+        cell.alignment = ALIGN_L
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=n_cols)
+        ws.row_dimensions[row_idx].height = 16
+
     wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # remove default sheet
 
-    # ── Config sheet ──────────────────────────────────────────────────────────
-    ws_cfg = wb.active
-    ws_cfg.title = 'Config'
-    cfg_rows = [
-        ('Campaign Name', campaign_name),
-        ('Scenario', s['name']),
-        ('Audience Type', audience_type),
-        ('Industry', industry),
-        ('Start Date', start_date.strftime('%b %d, %Y')),
-        ('End Date', end_date.strftime('%b %d, %Y')),
-        ('Total Budget (€)', s['grand_total_bud']),
-        ('', ''),
-        ('Market', 'Budget (€)', 'Share (%)'),
-    ]
-    for row in cfg_rows:
-        ws_cfg.append(list(row))
-    _xl_header(ws_cfg, 9)
-    for mkt in s['selected_markets']:
-        ws_cfg.append([MARKET_LABELS[mkt], round(s['market_budgets'][mkt], 2), round(s['market_pcts'][mkt], 1)])
-    ws_cfg.column_dimensions['A'].width = 26
-    ws_cfg.column_dimensions['B'].width = 20
-    ws_cfg.column_dimensions['C'].width = 14
+    for s, sid in zip(all_scenarios, scenario_ids):
+        tab_name = s['name'][:31]
+        ws = wb.create_sheet(title=tab_name)
+        row = 1
+        n_cols_max = 14  # enough for widest channel
 
-    # ── KPI Summary sheet ─────────────────────────────────────────────────────
-    ws_sum = wb.create_sheet('KPI Summary')
-    sum_headers = ['Goal', 'Channel'] + [COL_FMT[c][0] for c in ADDITIVE if c in COL_FMT]
-    ws_sum.append(sum_headers)
-    _xl_header(ws_sum, 1)
-    for goal, chs in s['grand_totals'].items():
-        for ch, rows in chs.items():
-            if not rows:
-                continue
-            gdf = pd.concat(rows, ignore_index=True)
-            row = [goal, ch]
-            for col in ADDITIVE:
-                row.append(round(gdf[col].sum(), 0) if col in gdf.columns else 0)
-            ws_sum.append(row)
-    for i, col in enumerate(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'], 1):
-        ws_sum.column_dimensions[col].width = 18
+        # Title row
+        channels_flat = sorted({ch for chs in s['goal_channels'].values() for ch in chs})
+        title = (f"SCENARIO {sid + 1}  —  {s['name']}  —  "
+                 f"{len(s['selected_markets'])} Market{'s' if len(s['selected_markets']) != 1 else ''}")
+        _write_title_row(ws, row, title, n_cols_max)
+        row += 1
 
-    # ── Per goal+channel sheets ───────────────────────────────────────────────
-    for goal, chs in s['grand_totals'].items():
-        for ch, rows in chs.items():
-            if not rows:
-                continue
-            gdf = pd.concat(rows, ignore_index=True)
-            sheet_name = f'{goal[:9]}_{ch[:7]}'[:31]
-            ws = wb.create_sheet(sheet_name)
-            raw_cols = ['Market', 'Period', 'Days'] + [c for c in ADDITIVE if c in gdf.columns]
-            display_cols = ['Market', 'Period', 'Days'] + [COL_FMT[c][0] for c in ADDITIVE if c in gdf.columns]
-            ws.append(display_cols)
-            _xl_header(ws, 1)
-            for _, r in gdf[raw_cols].iterrows():
-                ws.append([round(r[c], 0) if isinstance(r.get(c), float) else r.get(c, '') for c in raw_cols])
-            ws.column_dimensions['A'].width = 20
-            ws.column_dimensions['B'].width = 20
-            for col_letter in ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']:
-                ws.column_dimensions[col_letter].width = 16
+        # Info row
+        flight = f"{start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
+        goals_str = '  |  '.join(
+            f"{g}: {', '.join(chs)}" for g, chs in s['goal_channels'].items()
+        )
+        info_text = f"Total Budget: €{s['grand_total_bud']:,.0f}  |  Flight: {flight}  |  {goals_str}"
+        cell = ws.cell(row=row, column=1, value=info_text)
+        cell.fill = C_TITLE
+        cell.font = Font(color='FFFFFF', size=10)
+        cell.alignment = ALIGN_L
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols_max)
+        row += 1
+        row += 1  # blank row
+
+        for mkt in s['selected_markets']:
+            mkt_budget = s['market_budgets'][mkt]
+            for goal, goal_chs in s['goal_channels'].items():
+                ch_budgets = _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid)
+                for ch in goal_chs:
+                    ch_bud = ch_budgets.get(ch, 0)
+                    bm = _get_bm_ss(ch, mkt, goal, sid)
+                    conv_rate = bm.get('conv_rate', 0.02)
+
+                    # Recompute weekly breakdown for this market/channel/goal
+                    wk_periods = generate_periods(start_date, end_date, 'Weekly')
+                    df = build_table(wk_periods, ch_bud, bm, goal, ch, conv_rate)
+                    data_rows = df[df['Period'] != 'TOTAL']
+                    total_row = df[df['Period'] == 'TOTAL'].iloc[0]
+
+                    cols_def = _cols_for(ch, goal)
+                    n_cols = len(cols_def)
+                    n_cols_max = max(n_cols_max, n_cols)
+
+                    # Market + channel section header
+                    section_label = f"{MARKET_LABELS[mkt]}  —  {ch}  ({goal})"
+                    _write_section_header(ws, row, section_label, n_cols)
+                    row += 1
+
+                    # Column header row (gold)
+                    for col_idx, (hdr, _, _, _) in enumerate(cols_def, 1):
+                        cell = ws.cell(row=row, column=col_idx, value=hdr)
+                        cell.fill = C_COLS
+                        cell.font = Font(color='FFFFFF', bold=True)
+                        cell.alignment = ALIGN_C
+                    ws.row_dimensions[row].height = 15
+                    row += 1
+
+                    # Data rows
+                    for _, dr in data_rows.iterrows():
+                        for col_idx, (hdr, key, is_input, dec) in enumerate(cols_def, 1):
+                            val = dr.get(key, '')
+                            if key == 'Period':
+                                cell_val = str(val)
+                                fill = C_CALC
+                            elif key == 'Days':
+                                cell_val = int(val) if val != '' else ''
+                                fill = C_CALC
+                            elif key in ('ctr', 'view_rate'):
+                                cell_val = round(float(bm.get(key, val if val != '' else 0)), 4)
+                                fill = C_INPUT if is_input else C_CALC
+                            elif key in ('cpc', 'cpm', 'cpa', 'cpv'):
+                                cell_val = round(float(val), 2) if val != '' and val != 0 else '-'
+                                fill = C_INPUT if is_input else C_CALC
+                            elif key == 'frequency':
+                                cell_val = round(float(bm.get('frequency', val if val != '' else 3)), 1)
+                                fill = C_INPUT
+                            elif key == 'Budget':
+                                cell_val = round(float(val), 2)
+                                fill = C_CALC
+                            elif dec is not None:
+                                cell_val = round(float(val), dec) if val != '' and val != 0 else 0
+                                fill = C_CALC
+                            else:
+                                cell_val = val
+                                fill = C_CALC
+                            cell = ws.cell(row=row, column=col_idx, value=cell_val)
+                            cell.fill = fill
+                            cell.font = F_NORMAL
+                            cell.alignment = ALIGN_C
+                            if isinstance(cell_val, float) and key not in ('ctr', 'view_rate'):
+                                cell.number_format = '#,##0.00'
+                            elif isinstance(cell_val, int) and key not in ('Days',):
+                                cell.number_format = '#,##0'
+                        row += 1
+
+                    # TOTAL row (light blue)
+                    for col_idx, (hdr, key, is_input, dec) in enumerate(cols_def, 1):
+                        val = total_row.get(key, '')
+                        if key == 'Period':
+                            cell_val = 'TOTAL'
+                        elif key in ('ctr', 'view_rate'):
+                            cell_val = round(float(bm.get(key, 0)), 4)
+                        elif key == 'frequency':
+                            cell_val = round(float(bm.get('frequency', 3)), 1)
+                        elif key == 'Days':
+                            cell_val = int(total_row.get('Days', 0))
+                        elif val != '' and val is not None:
+                            try:
+                                cell_val = round(float(val), dec if dec is not None else 0)
+                            except (TypeError, ValueError):
+                                cell_val = val
+                        else:
+                            cell_val = ''
+                        cell = ws.cell(row=row, column=col_idx, value=cell_val)
+                        cell.fill = C_TOTAL
+                        cell.font = F_BOLD
+                        cell.alignment = ALIGN_C
+                        if isinstance(cell_val, (int, float)) and key not in ('Days', 'ctr', 'view_rate', 'frequency'):
+                            cell.number_format = '#,##0.00' if isinstance(cell_val, float) and cell_val % 1 != 0 else '#,##0'
+                    row += 1
+
+                    # FUNNEL block
+                    funnel_stages = _funnel_stages(ch, goal)
+                    imp_total = float(total_row.get('impressions', 1) or 1)
+
+                    # Funnel header
+                    fh1 = ws.cell(row=row, column=1, value='FUNNEL')
+                    fh1.fill = C_TITLE; fh1.font = F_WHITE; fh1.alignment = ALIGN_C
+                    fh2 = ws.cell(row=row, column=2, value='Total')
+                    fh2.fill = C_TITLE; fh2.font = F_WHITE; fh2.alignment = ALIGN_C
+                    fh3 = ws.cell(row=row, column=3, value='% of Impressions')
+                    fh3.fill = C_TITLE; fh3.font = F_WHITE; fh3.alignment = ALIGN_C
+                    for ci in range(4, n_cols + 1):
+                        ws.cell(row=row, column=ci).fill = C_TITLE
+                    row += 1
+
+                    for stage_label, stage_key, stage_fill in funnel_stages:
+                        raw_val = float(total_row.get(stage_key, 0) or 0)
+                        pct_val = raw_val / imp_total if stage_key != 'Budget' and imp_total > 0 else None
+                        c1 = ws.cell(row=row, column=1, value=stage_label)
+                        c1.fill = stage_fill; c1.font = F_WHITE; c1.alignment = ALIGN_L
+                        c2 = ws.cell(row=row, column=2, value=round(raw_val, 2))
+                        c2.fill = stage_fill; c2.font = F_WHITE; c2.alignment = ALIGN_C
+                        c2.number_format = '#,##0.00' if stage_key == 'Budget' else '#,##0'
+                        c3 = ws.cell(row=row, column=3,
+                                     value=round(pct_val, 4) if pct_val is not None else '-')
+                        c3.fill = stage_fill; c3.font = F_WHITE; c3.alignment = ALIGN_C
+                        if pct_val is not None:
+                            c3.number_format = '0.00%'
+                        for ci in range(4, n_cols + 1):
+                            ws.cell(row=row, column=ci).fill = stage_fill
+                        row += 1
+
+                    row += 1  # blank separator
+
+        # Column widths
+        ws.column_dimensions['A'].width = 22  # Period
+        ws.column_dimensions['B'].width = 7   # Days
+        for i in range(3, n_cols_max + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 14
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -1172,24 +1456,16 @@ def _render_scenario(sid):
     }
 
 
+_scenario_sids = []
 for sid, s_tab in enumerate(scenario_tabs):
     with s_tab:
         s_data = _render_scenario(sid)
         if s_data:
             all_scenarios_data.append(s_data)
+            _scenario_sids.append(sid)
             st.divider()
-            dl1, dl2 = st.columns(2)
-            xl_bytes = _build_excel(s_data, campaign_name, start_date, end_date, audience_type, industry)
-            dl1.download_button(
-                label=f'⬇ Excel — {s_data["name"]}',
-                data=xl_bytes,
-                file_name=f'{campaign_name.replace(" ", "_")}_{s_data["name"].replace(" ", "_")}.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                key=f'dl_excel_{sid}',
-                use_container_width=True,
-            )
             gads_bytes = _build_gads_csv_scenario(s_data, sid, campaign_name, start_date, end_date)
-            dl2.download_button(
+            st.download_button(
                 label=f'⬇ Google Ads CSV — {s_data["name"]}',
                 data=gads_bytes,
                 file_name=f'{campaign_name.replace(" ", "_")}_{s_data["name"].replace(" ", "_")}_google_ads.csv',
@@ -1197,6 +1473,18 @@ for sid, s_tab in enumerate(scenario_tabs):
                 key=f'dl_gads_{sid}',
                 use_container_width=True,
             )
+
+# ── Combined Excel download (all scenarios as tabs) ───────────────────────────
+if all_scenarios_data:
+    xl_bytes = _build_excel_all(all_scenarios_data, _scenario_sids, campaign_name, start_date, end_date)
+    st.download_button(
+        label=f'⬇ Download Excel — All Scenarios ({len(all_scenarios_data)} tab{"s" if len(all_scenarios_data) != 1 else ""})',
+        data=xl_bytes,
+        file_name=f'{campaign_name.replace(" ", "_")}_media_plan.xlsx',
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        key='dl_excel_all',
+        use_container_width=True,
+    )
 
 
 # ── Compare tab (only when 2+ scenarios) ─────────────────────────────────────
