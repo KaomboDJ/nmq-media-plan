@@ -599,7 +599,7 @@ def render_goal_section(mkt, goal, selected_channels, ch_budgets, periods, grand
 
 # ── Save / Load helpers ───────────────────────────────────────────────────────
 
-_SKIP_KEYS = {'_pending_load', 'FormSubmitter'}
+_SKIP_KEYS = {'_pending_load', 'FormSubmitter', '_uploader_v'}
 
 def _serialise_state():
     data = {'scenario_names': st.session_state.get('scenario_names', ['Scenario 1'])}
@@ -1087,6 +1087,16 @@ def _step(n, label):
     )
 
 
+# Apply any pending plan load before widgets render (backup for app.py handler)
+if '_pending_load' in st.session_state:
+    _load_data = st.session_state.pop('_pending_load')
+    for _k, _v in _load_data.items():
+        if isinstance(_v, dict) and '__date__' in _v:
+            st.session_state[_k] = date.fromisoformat(_v['__date__'])
+        else:
+            st.session_state[_k] = _v
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(_step(1, 'Campaign Name'), unsafe_allow_html=True)
@@ -1136,11 +1146,16 @@ with st.sidebar:
         mime='application/json',
         use_container_width=True,
     )
-    uploaded = st.file_uploader('Load plan (.json)', type='json', label_visibility='collapsed')
+    if '_uploader_v' not in st.session_state:
+        st.session_state['_uploader_v'] = 0
+    uploaded = st.file_uploader('Load plan (.json)', type='json',
+                                label_visibility='collapsed',
+                                key=f'_plan_uploader_{st.session_state["_uploader_v"]}')
     if uploaded is not None:
         try:
             payload = json.loads(uploaded.read().decode('utf-8'))
             st.session_state['_pending_load'] = payload
+            st.session_state['_uploader_v'] += 1  # new key on next render = clears the uploader
             st.rerun()
         except Exception as e:
             st.error(f'Could not load plan: {e}')
