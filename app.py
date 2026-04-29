@@ -50,8 +50,9 @@ st.markdown("""
 
     div[data-testid="stMetric"] label { font-size: 0.75rem; }
 
-    .nmq-sidebar-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-    .nmq-sidebar-logo img { height: 32px; }
+    /* Force sidebar logo to be large */
+    [data-testid="stLogo"] { height: 64px !important; min-height: 64px !important; padding: 8px 0 !important; }
+    [data-testid="stLogo"] img { height: 56px !important; width: auto !important; max-height: 56px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,14 +70,6 @@ st.logo(
     link='https://nmqdigital.com',
     size='large',
 )
-
-with st.sidebar:
-    st.markdown(
-        '<p style="margin:0 0 4px 0;font-weight:700;font-size:0.95rem;color:#1A1A1A">'
-        'Media Plan Generator</p>',
-        unsafe_allow_html=True,
-    )
-    st.markdown('---')
 
 pg = st.navigation({
     'NMQ Tools': [
