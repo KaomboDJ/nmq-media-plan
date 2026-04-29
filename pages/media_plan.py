@@ -504,24 +504,28 @@ def _build_excel(s, campaign_name, start_date, end_date, audience_type, industry
     return buf.getvalue()
 
 
-# ── Sidebar (global settings only) ───────────────────────────────────────────
-with st.sidebar:
-    st.markdown(
-        '<div class="nmq-sidebar-logo">'
-        '<img src="https://nmqdigital.com/hs-fs/hubfs/raw_assets/public/NMQ-Digital/images/NMQ_Green_Logo.png">'
-        '<span style="font-weight:700;font-size:0.9rem;color:#1A1A1A">Media Plan Generator</span>'
-        '</div>',
-        unsafe_allow_html=True,
+# ── Step label helper ─────────────────────────────────────────────────────────
+def _step(n, label):
+    return (
+        f'<p style="margin:6px 0 2px 0;font-weight:600;font-size:0.88rem;color:#1A1A1A">'
+        f'<span style="background:#2BB5A5;color:white;border-radius:50%;'
+        f'width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;'
+        f'font-size:0.68rem;font-weight:700;margin-right:6px;flex-shrink:0">{n}</span>'
+        f'{label}</p>'
     )
-    st.markdown('---')
 
-    campaign_name = st.text_input('Campaign Name', value='Campaign — 2026', key='campaign_name')
 
-    st.markdown('**Audience Type**')
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown(_step(1, 'Campaign Name'), unsafe_allow_html=True)
+    campaign_name = st.text_input('Campaign Name', value='Campaign — 2026',
+                                  key='campaign_name', label_visibility='collapsed')
+
+    st.markdown(_step(2, 'Audience Type'), unsafe_allow_html=True)
     audience_type = st.radio('Audience', ['B2B', 'B2C'], horizontal=True,
                              label_visibility='collapsed', key='audience_type')
 
-    st.markdown('**Industry**')
+    st.markdown(_step(3, 'Industry'), unsafe_allow_html=True)
     INDUSTRIES_SB = [
         'Logistics, Supply Chain & Transportation',
         'Industrial, Manufacturing & Materials',
@@ -535,7 +539,7 @@ with st.sidebar:
     industry = st.selectbox('Industry', INDUSTRIES_SB, label_visibility='collapsed', key='industry')
 
     st.markdown('---')
-    st.markdown('**Flight Dates**')
+    st.markdown(_step(4, 'Flight Dates'), unsafe_allow_html=True)
     col_s, col_e = st.columns(2)
     start_date = col_s.date_input('Start', value=date(2026, 5, 12), key='start_date')
     end_date   = col_e.date_input('End',   value=date(2026, 6, 29), key='end_date')
@@ -546,13 +550,12 @@ with st.sidebar:
 
     st.caption(f'{(end_date - start_date).days + 1} days total')
 
-    st.markdown('---')
-    st.markdown('**Period Breakdown**')
+    st.markdown(_step(5, 'Period Breakdown'), unsafe_allow_html=True)
     breakdown = st.selectbox('Breakdown', ['Daily', 'Weekly', 'Bi-Weekly', 'Monthly'],
                              index=1, label_visibility='collapsed', key='breakdown')
 
     st.markdown('---')
-    st.markdown('**Goals & Channels**')
+    st.markdown(_step(6, 'Goals & Channels'), unsafe_allow_html=True)
     st.caption('Tick which channels apply to each goal.')
     hc = st.columns([2, 1, 1, 1])
     hc[1].markdown('<small>YT</small>', unsafe_allow_html=True)
@@ -578,19 +581,20 @@ with st.sidebar:
     selected_goals = list(goal_channels.keys())
 
     st.markdown('---')
-    st.markdown('**Markets**')
+    st.markdown(_step(7, 'Markets'), unsafe_allow_html=True)
     selected_markets = st.multiselect(
         'Markets', list(MARKET_LABELS.keys()), default=[],
         format_func=lambda k: f'{k} — {MARKET_LABELS[k]}',
         label_visibility='collapsed',
         key='selected_markets',
     )
-    st.markdown('**Total Budget (€)**')
+
+    st.markdown(_step(8, 'Total Budget (€)'), unsafe_allow_html=True)
     grand_total_bud = st.number_input(
         'Total', min_value=0, value=0, step=500, label_visibility='collapsed', key='total_budget'
     )
 
-    st.markdown('**Market Split (%)**')
+    st.markdown(_step(9, 'Market Split (%)'), unsafe_allow_html=True)
     market_budgets, market_pcts = {}, {}
     if selected_markets:
         n_mkts = len(selected_markets)

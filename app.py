@@ -64,6 +64,16 @@ if '_pending_load' in st.session_state:
         else:
             st.session_state[k] = v
 
+with st.sidebar:
+    st.markdown(
+        '<div class="nmq-sidebar-logo" style="padding:4px 0 8px 0">'
+        '<img src="https://nmqdigital.com/hs-fs/hubfs/raw_assets/public/NMQ-Digital/images/NMQ_Green_Logo.png">'
+        '<span style="font-weight:700;font-size:1rem;color:#1A1A1A">Media Plan Generator</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('---')
+
 pg = st.navigation({
     'NMQ Tools': [
         st.Page('pages/media_plan.py', title='Media Plan', icon='📋'),
