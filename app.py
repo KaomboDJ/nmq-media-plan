@@ -698,16 +698,12 @@ with st.sidebar:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-logo_col, title_col = st.columns([1, 8])
-with logo_col:
-    st.image('https://nmqdigital.com/hs-fs/hubfs/raw_assets/public/NMQ-Digital/images/NMQ_Green_Logo.png', width=100)
-with title_col:
-    st.markdown(
-        '<h1 style="margin:0;padding-top:6px;font-family:Inter,sans-serif;'
-        'font-size:1.8rem;color:#1A1A1A">Media Plan Generator</h1>',
-        unsafe_allow_html=True,
-    )
-    st.caption(f'{campaign_name}  ·  {start_date.strftime("%b %d, %Y")} – {end_date.strftime("%b %d, %Y")}  ·  {breakdown}')
+st.markdown(
+    f'<h2 style="margin:0 0 2px 0;font-family:Inter,sans-serif;font-size:1.5rem;color:#1A1A1A">'
+    f'{campaign_name}</h2>',
+    unsafe_allow_html=True,
+)
+st.caption(f'{start_date.strftime("%b %d, %Y")} – {end_date.strftime("%b %d, %Y")}  ·  {breakdown}  ·  {audience_type}  ·  {industry}')
 st.divider()
 
 # Scenario management via session state
