@@ -50,9 +50,20 @@ st.markdown("""
 
     div[data-testid="stMetric"] label { font-size: 0.75rem; }
 
-    /* Force sidebar logo to be large */
-    [data-testid="stLogo"] { height: 64px !important; min-height: 64px !important; padding: 8px 0 !important; }
-    [data-testid="stLogo"] img { height: 56px !important; width: auto !important; max-height: 56px !important; }
+    /* Force sidebar logo large — target every possible container */
+    div[data-testid="stSidebarHeader"] { min-height: 80px !important; padding: 10px 16px !important; }
+    div[data-testid="stSidebarHeader"] a { display: block !important; }
+    div[data-testid="stSidebarHeader"] img,
+    div[data-testid="stSidebarHeader"] a img,
+    [data-testid="stLogo"],
+    [data-testid="stLogo"] img {
+        height: 60px !important;
+        max-height: 60px !important;
+        min-height: 60px !important;
+        width: auto !important;
+        max-width: 200px !important;
+        object-fit: contain !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
