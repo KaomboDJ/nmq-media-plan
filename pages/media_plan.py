@@ -10,6 +10,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as _components
 import toml
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -100,6 +101,60 @@ CH_COLORS = {
 }
 
 ALL_GOALS = ['Awareness', 'Traffic', 'Conversion']
+
+MARKET_GROUPS = {
+    'DACH':        ['DE', 'AT', 'CH'],
+    'Nordics':     ['DK', 'FI', 'NO', 'SE'],
+    'BeNeLux':     ['BE', 'NL', 'LU'],
+    'Southern EU': ['ES', 'IT', 'PT', 'GR'],
+    'CEE':         ['PL', 'CZ', 'HU', 'RO', 'BG', 'SK', 'SI', 'HR'],
+    'UK + IE':     ['UK', 'IE'],
+    'All EU':      ['DE','AT','CH','DK','FI','NO','SE','BE','NL','LU','ES','IT','PT','GR',
+                    'PL','CZ','HU','RO','BG','SK','SI','HR','FR','UK','IE','EE','LV','LT',
+                    'CY','MT'],
+}
+
+PLAN_TEMPLATES = {
+    'DACH Awareness Launch': {
+        'markets': ['DE','AT','CH'], 'budget': 50000,
+        'goals': {'Awareness': ['YouTube']},
+    },
+    'Pan-EU Lead Gen': {
+        'markets': ['DE','FR','NL','BE','ES','IT','SE','PL'], 'budget': 120000,
+        'goals': {'Traffic': ['LinkedIn','Search'], 'Conversion': ['Search']},
+    },
+    'Single Market Full Funnel': {
+        'markets': ['DE'], 'budget': 80000,
+        'goals': {'Awareness': ['YouTube'], 'Traffic': ['LinkedIn','Search'], 'Conversion': ['Search']},
+    },
+    'Nordics Brand Building': {
+        'markets': ['DK','FI','NO','SE'], 'budget': 60000,
+        'goals': {'Awareness': ['YouTube','LinkedIn']},
+    },
+    'BeNeLux Performance': {
+        'markets': ['BE','NL','LU'], 'budget': 40000,
+        'goals': {'Traffic': ['Search','LinkedIn'], 'Conversion': ['Search']},
+    },
+}
+
+BENCH_PRESET_FACTORS = {
+    'Conservative': {'cpm': 1.15, 'cpc': 1.15, 'ctr': 0.80, 'view_rate': 0.85, 'conv_rate': 0.75},
+    'Average':      {'cpm': 1.00, 'cpc': 1.00, 'ctr': 1.00, 'view_rate': 1.00, 'conv_rate': 1.00},
+    'Aggressive':   {'cpm': 0.88, 'cpc': 0.88, 'ctr': 1.25, 'view_rate': 1.15, 'conv_rate': 1.30},
+}
+
+BENCH_HELP = {
+    'cpm':              'Cost per 1,000 impressions. Western EU: €10–13. Eastern EU: €3.5–5.',
+    'cpc':              'Cost per click on Search. Ranges €0.70 (Eastern EU) to €2.90 (DACH/Nordics).',
+    'ctr':              'Click-through rate — % of ad impressions that result in a click.',
+    'view_rate':        'YouTube: % of impressions resulting in a 30-second (or full-video) view.',
+    'frequency':        'Average number of times one unique user sees your ad across the campaign.',
+    'click_to_session': '% of clicks that result in a tracked site session (accounts for pixel gaps and bounces).',
+    'conv_rate':        '% of sessions that complete your goal action (form fill, purchase, sign-up, etc.).',
+}
+
+DONUT_PALETTE = ['#2BB5A5','#1F497D','#4DB896','#437CA3','#5A3E7A','#E8A838','#8B3A3A','#6B7280',
+                 '#229990','#2E8A72','#6B9FBF','#7DCFB0']
 
 ADDITIVE = ['Budget', 'impressions', 'reach', 'views', 'clicks', 'sessions', 'conversions']
 
@@ -266,9 +321,146 @@ def make_funnel(df, goal, channel, title):
     return fig
 
 
+def _duplicate_scenario(sid):
+    import re as _re
+    new_sid = len(st.session_state.scenario_names)
+    st.session_state.scenario_names.append(st.session_state.scenario_names[sid] + ' (copy)')
+    skip_prefixes = ('remove_', 'dup_', 'rename_', 'btn_', 'dl_', 'funnel_', 'grand_',
+                     'preset_', 'eq_', 'cpm_eff_', 'grp_', 'tpl_', 'pacing_', 'bar_')
+    pattern = _re.compile(rf'^(.+)_{sid}$')
+    for k, v in list(st.session_state.items()):
+        m = pattern.match(str(k))
+        if m and not any(str(k).startswith(p) for p in skip_prefixes):
+            st.session_state[f'{m.group(1)}_{new_sid}'] = v
+    st.rerun()
+
+
+def _apply_template(sid, tpl_name):
+    tpl = PLAN_TEMPLATES[tpl_name]
+    n = len(tpl['markets'])
+    st.session_state[f'selected_markets_{sid}'] = tpl['markets']
+    st.session_state[f'total_budget_{sid}'] = tpl['budget']
+    default_pct = round(100.0 / n, 1)
+    for mkt in tpl['markets']:
+        st.session_state[f'pct_{mkt}_{sid}'] = default_pct
+    for goal in ALL_GOALS:
+        goal_on = goal in tpl['goals']
+        st.session_state[f'sb_goal_{goal}_{sid}'] = goal_on
+        for ch, key in [('YouTube','sb_yt'), ('Search','sb_s'), ('LinkedIn','sb_li')]:
+            st.session_state[f'{key}_{goal}_{sid}'] = goal_on and ch in tpl['goals'].get(goal, [])
+    st.rerun()
+
+
+def _apply_bench_preset(ch, mkt, goal, sid, preset_name):
+    b = BENCH[mkt][ch]
+    f = BENCH_PRESET_FACTORS[preset_name]
+    keys = []
+    if ch == 'Search':
+        keys = [
+            (f'cpc_{mkt}_{ch}_{goal}_{sid}',              round(b['cpc'] * f['cpc'], 2)),
+            (f'ctr_{mkt}_{ch}_{goal}_{sid}',              round(b['ctr'] * 100 * f['ctr'], 2)),
+            (f'click_to_session_{mkt}_{ch}_{goal}_{sid}', round(b.get('click_to_session', 0.85) * 100, 0)),
+            (f'conv_rate_{mkt}_{ch}_{goal}_{sid}',        round(b.get('conv_rate', 0.03) * 100 * f['conv_rate'], 1)),
+        ]
+    elif ch == 'YouTube':
+        keys = [
+            (f'cpm_{mkt}_{ch}_{goal}_{sid}',              round(b['cpm'] * f['cpm'], 2)),
+            (f'view_rate_{mkt}_{ch}_{goal}_{sid}',        round(b.get('view_rate', 0.31) * 100 * f['view_rate'], 1)),
+            (f'ctr_{mkt}_{ch}_{goal}_{sid}',              round(b['ctr'] * 100 * f['ctr'], 2)),
+            (f'click_to_session_{mkt}_{ch}_{goal}_{sid}', round(b.get('click_to_session', 0.80) * 100, 0)),
+            (f'conv_rate_{mkt}_{ch}_{goal}_{sid}',        round(b.get('conv_rate', 0.02) * 100 * f['conv_rate'], 1)),
+        ]
+    else:
+        keys = [
+            (f'cpm_{mkt}_{ch}_{goal}_{sid}',              round(b['cpm'] * f['cpm'], 2)),
+            (f'ctr_{mkt}_{ch}_{goal}_{sid}',              round(b['ctr'] * 100 * f['ctr'], 2)),
+            (f'click_to_session_{mkt}_{ch}_{goal}_{sid}', round(b.get('click_to_session', 0.82) * 100, 0)),
+            (f'conv_rate_{mkt}_{ch}_{goal}_{sid}',        round(b.get('conv_rate', 0.02) * 100 * f['conv_rate'], 1)),
+        ]
+    for k, v in keys:
+        st.session_state[k] = v
+
+
+def _scenario_status(sid):
+    ss = st.session_state
+    has_goals   = any(ss.get(f'sb_goal_{g}_{sid}', False) for g in ALL_GOALS)
+    has_markets = bool(ss.get(f'selected_markets_{sid}', []))
+    has_budget  = ss.get(f'total_budget_{sid}', 0) > 0
+    mkts        = ss.get(f'selected_markets_{sid}', [])
+    pct_sum     = sum(ss.get(f'pct_{m}_{sid}', 0) for m in mkts)
+    split_ok    = has_markets and abs(pct_sum - 100) <= 0.5
+    steps = [
+        ('Goals',   has_goals),
+        ('Markets', has_markets),
+        ('Budget',  has_budget),
+        ('Split',   split_ok),
+    ]
+    parts = []
+    for label, ok in steps:
+        color = '#2BB5A5' if ok else '#E8A838'
+        icon  = '✓' if ok else '○'
+        parts.append(
+            f'<span style="background:{color};color:white;border-radius:4px;'
+            f'padding:2px 8px;font-size:0.72rem;font-weight:600;margin-right:4px">'
+            f'{icon} {label}</span>'
+        )
+    st.markdown('<div style="margin-bottom:8px">' + ''.join(parts) + '</div>', unsafe_allow_html=True)
+
+
+def _market_donut(market_pcts):
+    labels = [f'{MARKET_LABELS[m]}' for m in market_pcts]
+    values = list(market_pcts.values())
+    colors = DONUT_PALETTE[:len(labels)]
+    fig = go.Figure(go.Pie(
+        labels=labels, values=values, hole=0.55,
+        marker={'colors': colors, 'line': {'color': 'white', 'width': 2}},
+        textinfo='percent', textfont={'size': 10},
+        hovertemplate='%{label}: %{value:.1f}%<extra></extra>',
+    ))
+    fig.update_layout(
+        margin={'t': 10, 'b': 10, 'l': 10, 'r': 10},
+        height=200,
+        paper_bgcolor='rgba(0,0,0,0)',
+        showlegend=True,
+        legend={'font': {'size': 9}, 'orientation': 'v', 'x': 1.02},
+    )
+    return fig
+
+
+def _pacing_chart(periods, budget, sid):
+    if not periods or budget <= 0:
+        return
+    total_days = sum(p['days'] for p in periods) or 1
+    labels = [p['label'] for p in periods]
+    values = [round(budget * p['days'] / total_days, 0) for p in periods]
+    fig = go.Figure(go.Bar(
+        x=labels, y=values,
+        marker_color='#2BB5A5',
+        text=[f'€{v:,.0f}' for v in values],
+        textposition='outside',
+        textfont={'size': 9},
+    ))
+    fig.update_layout(
+        title={'text': 'Budget Pacing', 'font': {'size': 11, 'color': '#1A1A1A'}, 'x': 0.5, 'xanchor': 'center'},
+        margin={'t': 36, 'b': 10, 'l': 10, 'r': 10},
+        height=210,
+        paper_bgcolor='rgba(0,0,0,0)',
+        yaxis={'showticklabels': False, 'showgrid': False, 'zeroline': False},
+        xaxis={'tickangle': -30 if len(periods) > 6 else 0, 'tickfont': {'size': 9}},
+    )
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False}, key=f'pacing_{sid}')
+
+
 def benchmark_inputs(ch, mkt, goal, sid=0):
     """Render benchmark inputs for one channel/market/goal. Returns a benchmark dict."""
     b = BENCH[mkt][ch]
+
+    # Preset buttons
+    pc = st.columns([1, 1, 1, 4])
+    for i, pname in enumerate(['Conservative', 'Average', 'Aggressive']):
+        if pc[i].button(pname, key=f'preset_{pname}_{ch}_{mkt}_{goal}_{sid}', use_container_width=True):
+            _apply_bench_preset(ch, mkt, goal, sid, pname)
+            st.rerun()
 
     fields = []
     if ch == 'Search':
@@ -309,6 +501,7 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
     raw = {}
     for i, (key, label, default, step, fmt, _) in enumerate(fields):
         raw[key] = cols[i].number_input(label, value=float(default), step=step, format=fmt,
+                                        help=BENCH_HELP.get(key, ''),
                                         key=f'{key}_{mkt}_{ch}_{goal}_{sid}')
 
     bm = {}
@@ -669,6 +862,16 @@ with st.sidebar:
             st.error(f'Could not load plan: {e}')
 
 
+# ── Auto-save warning ─────────────────────────────────────────────────────────
+_components.html("""
+<script>
+window.addEventListener('beforeunload', function(e) {
+    e.preventDefault();
+    e.returnValue = 'Download your plan JSON from the sidebar before leaving — unsaved changes will be lost.';
+});
+</script>
+""", height=0)
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 st.markdown(
     f'<h2 style="margin:0 0 2px 0;font-family:Inter,sans-serif;font-size:1.5rem;color:#1A1A1A">'
@@ -700,9 +903,37 @@ all_scenarios_data = []  # collected for AI section and Compare tab
 def _render_scenario(sid):
     """Render per-scenario config (goals, channels, markets, budget, split) then tables and funnels."""
 
+    # ── Header: rename + duplicate + remove ───────────────────────────────────
+    n_col, dup_col, rem_col = st.columns([6, 1, 1])
+    new_name = n_col.text_input('Scenario name', value=st.session_state.scenario_names[sid],
+                                key=f'rename_{sid}', label_visibility='collapsed',
+                                placeholder='Scenario name…')
+    if new_name and new_name != st.session_state.scenario_names[sid]:
+        st.session_state.scenario_names[sid] = new_name
+        st.rerun()
+    if dup_col.button('⧉ Dup', key=f'dup_{sid}', use_container_width=True, help='Duplicate this scenario'):
+        _duplicate_scenario(sid)
+    if rem_col.button('✕ Remove', key=f'remove_{sid}', use_container_width=True,
+                      disabled=len(st.session_state.scenario_names) <= 1,
+                      help='Remove this scenario'):
+        st.session_state.scenario_names.pop(sid)
+        st.rerun()
+
+    # ── Completion status ─────────────────────────────────────────────────────
+    _scenario_status(sid)
+
+    # ── Template picker ───────────────────────────────────────────────────────
+    with st.expander('Load a template', expanded=False):
+        tpl_options = ['— pick a template —'] + list(PLAN_TEMPLATES.keys())
+        tpl_sel = st.selectbox('Template', tpl_options, key=f'tpl_{sid}', label_visibility='collapsed')
+        if tpl_sel != '— pick a template —':
+            if st.button(f'Apply "{tpl_sel}"', key=f'tpl_apply_{sid}'):
+                _apply_template(sid, tpl_sel)
+
+    st.divider()
+
     # ── Goals & Channels ─────────────────────────────────────────────────────
     st.markdown('**Goals & Channels**')
-    st.caption('Tick which channels apply to each goal for this scenario.')
     hc = st.columns([2, 1, 1, 1])
     hc[1].markdown('<small>YT</small>', unsafe_allow_html=True)
     hc[2].markdown('<small>Search</small>', unsafe_allow_html=True)
@@ -731,6 +962,15 @@ def _render_scenario(sid):
     cfg1, cfg2 = st.columns([4, 1])
     with cfg1:
         st.markdown('**Markets**')
+        # Market group shortcuts
+        grp_cols = st.columns(len(MARKET_GROUPS))
+        for gi, (grp_label, grp_mkts) in enumerate(MARKET_GROUPS.items()):
+            if grp_cols[gi].button(grp_label, key=f'grp_{grp_label}_{sid}',
+                                   use_container_width=True, help=f'Add {", ".join(grp_mkts)}'):
+                current = list(st.session_state.get(f'selected_markets_{sid}', []))
+                merged  = current + [m for m in grp_mkts if m not in current]
+                st.session_state[f'selected_markets_{sid}'] = merged
+                st.rerun()
         s_markets = st.multiselect(
             'Markets', list(MARKET_LABELS.keys()), default=[],
             format_func=lambda k: f'{k} — {MARKET_LABELS[k]}',
@@ -748,28 +988,57 @@ def _render_scenario(sid):
     if s_markets:
         n_mkts = len(s_markets)
         default_pct = round(100.0 / n_mkts, 1)
-        st.markdown('**Market Split (%)**')
-        per_row = min(n_mkts, 4)
-        for row_start in range(0, n_mkts, per_row):
-            row_mkts = s_markets[row_start:row_start + per_row]
-            row_cols = st.columns(len(row_mkts) * 2)
-            for i, mkt in enumerate(row_mkts):
-                pct = row_cols[i * 2].number_input(
-                    f'{mkt}', min_value=0.0, max_value=100.0,
-                    value=default_pct, step=0.5, format='%.1f',
-                    key=f'pct_{mkt}_{sid}'
-                )
-                s_market_pcts[mkt] = pct
-                s_market_budgets[mkt] = s_budget * pct / 100
-                row_cols[i * 2 + 1].metric(mkt, f'€{s_market_budgets[mkt]:,.0f}')
-        pct_sum = sum(s_market_pcts.values())
-        if abs(pct_sum - 100) > 0.5:
-            st.warning(f'Split: {pct_sum:.1f}% — adjust to 100%')
-        else:
-            st.success(f'✓ €{s_budget:,} allocated')
+
+        # Budget split shortcuts
+        sc1, sc2, _ = st.columns([1, 1, 3])
+        if sc1.button('⚖ Equal split', key=f'eq_{sid}', use_container_width=True):
+            for m in s_markets:
+                st.session_state[f'pct_{m}_{sid}'] = default_pct
+            st.rerun()
+        if sc2.button('📊 CPM-efficient', key=f'cpm_eff_{sid}', use_container_width=True,
+                      help='More budget to cheaper markets to maximise impressions'):
+            weights = {}
+            for m in s_markets:
+                cpms = [BENCH[m][ch]['cpm'] for ch in ['YouTube', 'LinkedIn']
+                        if ch in BENCH[m] and 'cpm' in BENCH[m][ch]]
+                weights[m] = 1.0 / (sum(cpms) / len(cpms)) if cpms else 0.1
+            total_w = sum(weights.values()) or 1
+            for m in s_markets:
+                st.session_state[f'pct_{m}_{sid}'] = round(weights[m] / total_w * 100, 1)
+            st.rerun()
+
+        # Split inputs + donut side by side
+        split_col, donut_col = st.columns([3, 2])
+        with split_col:
+            st.markdown('**Market Split (%)**')
+            per_row = min(n_mkts, 3)
+            for row_start in range(0, n_mkts, per_row):
+                row_mkts = s_markets[row_start:row_start + per_row]
+                row_cols = st.columns(len(row_mkts) * 2)
+                for i, mkt in enumerate(row_mkts):
+                    pct = row_cols[i * 2].number_input(
+                        f'{mkt}', min_value=0.0, max_value=100.0,
+                        value=default_pct, step=0.5, format='%.1f',
+                        key=f'pct_{mkt}_{sid}'
+                    )
+                    s_market_pcts[mkt] = pct
+                    s_market_budgets[mkt] = s_budget * pct / 100
+                    row_cols[i * 2 + 1].metric(mkt, f'€{s_market_budgets[mkt]:,.0f}')
+            pct_sum = sum(s_market_pcts.values())
+            if abs(pct_sum - 100) > 0.5:
+                st.warning(f'Split: {pct_sum:.1f}% — adjust to 100%')
+            else:
+                st.success(f'✓ €{s_budget:,} allocated')
+        with donut_col:
+            if s_market_pcts:
+                st.plotly_chart(_market_donut(s_market_pcts), use_container_width=True,
+                                config={'displayModeBar': False}, key=f'donut_{sid}')
     else:
         st.info('Select at least one market above to build the plan.')
         return None
+
+    # Pacing chart (inline, compact)
+    _pacing_chart(periods, s_budget, sid)
 
     st.divider()
 
@@ -844,11 +1113,6 @@ def _render_scenario(sid):
 
 for sid, s_tab in enumerate(scenario_tabs):
     with s_tab:
-        if len(st.session_state.scenario_names) > 1:
-            _, x_col = st.columns([9, 1])
-            if x_col.button('✕ Remove', key=f'remove_{sid}', help=f'Remove {st.session_state.scenario_names[sid]}'):
-                st.session_state.scenario_names.pop(sid)
-                st.rerun()
         s_data = _render_scenario(sid)
         if s_data:
             all_scenarios_data.append(s_data)
@@ -956,6 +1220,35 @@ if compare_tab is not None:
                 if best[1] > 0:
                     winner_cols[col_idx].metric(metric_labels[col], best[0], help=f'Highest {metric_labels[col]} across all scenarios')
                 col_idx += 1
+
+            # ── Visual comparison bar charts ──────────────────────────────────
+            st.markdown('#### Visual comparison')
+            bar_metrics = [c for c in ['impressions','reach','clicks','sessions','conversions']
+                           if any(_aggregate_scenario_metrics(s).get(c, 0) > 0 for s in all_scenarios_data)]
+            if bar_metrics:
+                bar_cols = st.columns(min(len(bar_metrics), 3))
+                sc_names  = [s['name'] for s in all_scenarios_data]
+                sc_colors = DONUT_PALETTE[:len(all_scenarios_data)]
+                for bi, metric in enumerate(bar_metrics[:6]):
+                    with bar_cols[bi % 3]:
+                        vals = [_aggregate_scenario_metrics(s).get(metric, 0) for s in all_scenarios_data]
+                        fig  = go.Figure(go.Bar(
+                            x=sc_names, y=vals,
+                            marker_color=sc_colors,
+                            text=[COL_FMT[metric][1](v) for v in vals],
+                            textposition='outside',
+                            textfont={'size': 9},
+                        ))
+                        fig.update_layout(
+                            title={'text': COL_FMT[metric][0], 'font': {'size': 11}, 'x': 0.5, 'xanchor': 'center'},
+                            margin={'t': 34, 'b': 10, 'l': 10, 'r': 10},
+                            height=190,
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            yaxis={'showticklabels': False, 'showgrid': False, 'zeroline': False},
+                            xaxis={'tickfont': {'size': 9}},
+                        )
+                        st.plotly_chart(fig, use_container_width=True,
+                                        config={'displayModeBar': False}, key=f'bar_{metric}')
 
             st.divider()
 
