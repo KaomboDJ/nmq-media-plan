@@ -67,7 +67,16 @@ if '_pending_load' in st.session_state:
 st.logo(
     'https://nmqdigital.com/hs-fs/hubfs/raw_assets/public/NMQ-Digital/images/NMQ_Green_Logo.png',
     link='https://nmqdigital.com',
+    size='large',
 )
+
+with st.sidebar:
+    st.markdown(
+        '<p style="margin:0 0 4px 0;font-weight:700;font-size:0.95rem;color:#1A1A1A">'
+        'Media Plan Generator</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('---')
 
 pg = st.navigation({
     'NMQ Tools': [
