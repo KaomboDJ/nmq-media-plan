@@ -17,7 +17,7 @@ st.markdown("""
 
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-    .block-container { padding-top: 1.2rem; }
+    .block-container { padding-top: 3.5rem; }
 
     h3 { color: #2BB5A5; }
 
