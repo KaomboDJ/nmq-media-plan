@@ -422,7 +422,7 @@ def _market_donut(market_pcts):
         height=200,
         paper_bgcolor='rgba(0,0,0,0)',
         showlegend=True,
-        legend={'font': {'size': 9}, 'orientation': 'v', 'x': 1.02},
+        legend={'font': {'size': 12}, 'orientation': 'v', 'x': 1.02},
     )
     return fig
 
@@ -438,15 +438,15 @@ def _pacing_chart(periods, budget, sid):
         marker_color='#2BB5A5',
         text=[f'€{v:,.0f}' for v in values],
         textposition='outside',
-        textfont={'size': 9},
+        textfont={'size': 12, 'color': '#1A1A1A'},
     ))
     fig.update_layout(
-        title={'text': 'Budget Pacing', 'font': {'size': 11, 'color': '#1A1A1A'}, 'x': 0.5, 'xanchor': 'center'},
-        margin={'t': 36, 'b': 10, 'l': 10, 'r': 10},
-        height=210,
+        title={'text': 'Budget Pacing', 'font': {'size': 13, 'color': '#1A1A1A'}, 'x': 0.5, 'xanchor': 'center'},
+        margin={'t': 40, 'b': 30, 'l': 10, 'r': 10},
+        height=240,
         paper_bgcolor='rgba(0,0,0,0)',
         yaxis={'showticklabels': False, 'showgrid': False, 'zeroline': False},
-        xaxis={'tickangle': -30 if len(periods) > 6 else 0, 'tickfont': {'size': 9}},
+        xaxis={'tickangle': -30 if len(periods) > 6 else 0, 'tickfont': {'size': 11}},
     )
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False}, key=f'pacing_{sid}')
 
@@ -1023,7 +1023,12 @@ def _render_scenario(sid):
                     )
                     s_market_pcts[mkt] = pct
                     s_market_budgets[mkt] = s_budget * pct / 100
-                    row_cols[i * 2 + 1].metric(mkt, f'€{s_market_budgets[mkt]:,.0f}')
+                    row_cols[i * 2 + 1].markdown(
+                        f'<div style="font-size:0.78rem;color:#555;margin-top:4px">{mkt}</div>'
+                        f'<div style="font-size:0.9rem;font-weight:600;color:#1A1A1A">'
+                        f'€{s_market_budgets[mkt]:,.0f}</div>',
+                        unsafe_allow_html=True,
+                    )
             pct_sum = sum(s_market_pcts.values())
             if abs(pct_sum - 100) > 0.5:
                 st.warning(f'Split: {pct_sum:.1f}% — adjust to 100%')
