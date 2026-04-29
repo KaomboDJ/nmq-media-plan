@@ -1566,45 +1566,73 @@ Write in plain English. No jargon. One paragraph per topic. Frame everything for
             st.markdown(msg.content[0].text)
 
     st.divider()
-    st.markdown('#### Ask a question about the benchmarks')
-    st.caption('Ask anything — why a market costs more, whether a CTR looks realistic, what to adjust for your industry, etc.')
-    bench_question = st.text_area(
-        'Your question',
-        placeholder='e.g. Why is the CPM in Germany higher than in Poland? Should I adjust the view rate for a B2B audience?',
-        key='bench_question',
-        label_visibility='collapsed',
-        height=90,
-    )
-    if st.button('Ask AI', key='btn_bench_ask'):
-        if not bench_question.strip():
-            st.warning('Type a question first.')
-        else:
-            api_key = get_api_key()
-            if not api_key:
+    st.markdown('#### Chat about the benchmarks')
+    st.caption('Ask anything — follow up, dig deeper, change direction. The conversation keeps its memory.')
+
+    # Init chat history
+    if 'bench_chat' not in st.session_state:
+        st.session_state.bench_chat = []
+
+    # Clear button
+    if st.session_state.bench_chat:
+        if st.button('🗑 Clear conversation', key='bench_clear'):
+            st.session_state.bench_chat = []
+            st.rerun()
+
+    # Render existing messages
+    for msg in st.session_state.bench_chat:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+
+    # Chat input
+    if user_input := st.chat_input(
+        'e.g. Why is Germany CPM higher than Poland? Can I adjust CTR for a B2B audience?',
+        key='bench_chat_input',
+    ):
+        # Show user message immediately
+        with st.chat_message('user'):
+            st.markdown(user_input)
+
+        api_key = get_api_key()
+        if not api_key:
+            with st.chat_message('assistant'):
                 st.error('No API key found in .streamlit/secrets.toml')
-            else:
-                bench_lines, channels_in_use = _bench_context()
-                ask_prompt = f"""You are a senior paid media strategist advising a {audience_type} client in the {industry} sector.
+        else:
+            bench_lines, channels_in_use = _bench_context()
+            system_ctx = (
+                f'You are a senior paid media strategist advising a {audience_type} client '
+                f'in the {industry} sector. '
+                f'The plan uses these channels: {", ".join(channels_in_use) if channels_in_use else "various digital channels"}. '
+                f'Benchmarks in use:\n{chr(10).join(bench_lines)}\n\n'
+                f'Answer in 80–150 words. Be direct, reference actual numbers, '
+                f'frame for {audience_type} {industry}. No bullet points.'
+            )
+            # First user turn carries the full context; follow-ups are plain
+            api_messages = []
+            for i, m in enumerate(st.session_state.bench_chat):
+                if i == 0 and m['role'] == 'user':
+                    api_messages.append({'role': 'user', 'content': system_ctx + '\n\n---\n\n' + m['content']})
+                else:
+                    api_messages.append(m)
+            # Current turn
+            first_turn = len(st.session_state.bench_chat) == 0
+            api_messages.append({
+                'role': 'user',
+                'content': (system_ctx + '\n\n---\n\n' + user_input) if first_turn else user_input,
+            })
 
-The plan uses these channels: {', '.join(channels_in_use) if channels_in_use else 'various digital channels'}.
-
-Benchmarks in use:
-{chr(10).join(bench_lines)}
-
-The client's question:
-{bench_question.strip()}
-
-Answer in 100–150 words. Be direct and practical. Reference the actual benchmark numbers where relevant. Frame everything for a {audience_type} {industry} context. No bullet points — plain paragraphs, like a strategist talking to a client."""
-                import anthropic as _anthropic
-                client = _anthropic.Anthropic(api_key=api_key)
-                with st.spinner('Thinking...'):
-                    msg = client.messages.create(
+            import anthropic as _anthropic
+            client = _anthropic.Anthropic(api_key=api_key)
+            with st.chat_message('assistant'):
+                with st.spinner(''):
+                    resp = client.messages.create(
                         model='claude-haiku-4-5-20251001',
-                        max_tokens=350,
-                        messages=[{'role': 'user', 'content': ask_prompt}]
+                        max_tokens=400,
+                        messages=api_messages,
                     )
-                st.markdown(
-                    f'<div style="background:#f0faf9;border-left:3px solid #2BB5A5;padding:12px 14px;'
-                    f'border-radius:0 4px 4px 0;margin-top:8px">{msg.content[0].text}</div>',
-                    unsafe_allow_html=True,
-                )
+                reply = resp.content[0].text
+                st.markdown(reply)
+
+            # Persist both turns
+            st.session_state.bench_chat.append({'role': 'user',      'content': user_input})
+            st.session_state.bench_chat.append({'role': 'assistant', 'content': reply})
