@@ -1042,12 +1042,51 @@ def _render_scenario(sid):
 
     st.divider()
 
+    # ── Pinned country panel ──────────────────────────────────────────────────
+    pinned_mkt = st.session_state.get(f'pinned_country_{sid}')
+    if pinned_mkt and pinned_mkt in s_markets:
+        pm_budget = s_market_budgets.get(pinned_mkt, 0)
+        pm_pct    = s_market_pcts.get(pinned_mkt, 0)
+        pm_goals  = '  ·  '.join(
+            f'{g}: {", ".join(chs)}' for g, chs in goal_channels.items()
+        )
+        cached    = st.session_state.get(f'cached_kpis_{pinned_mkt}_{sid}', {})
+        kpi_html  = ('  <span style="color:#666">|</span>  '.join(
+            f'<b>{k}</b>: {v}' for k, v in cached.items()
+        )) if cached else '<span style="color:#888;font-style:italic">KPIs appear after first render</span>'
+        st.markdown(
+            '<style>'
+            '.pinned-bar{position:sticky;top:3.6rem;z-index:200;background:#f0faf9;'
+            'border-left:4px solid #2BB5A5;border-radius:0 6px 6px 0;'
+            'padding:7px 14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.08);'
+            'font-size:0.82rem;line-height:1.5}'
+            '</style>'
+            f'<div class="pinned-bar">📌 <strong>{MARKET_LABELS[pinned_mkt]}</strong>'
+            f'&nbsp;—&nbsp;€{pm_budget:,.0f} ({pm_pct:.0f}%)'
+            f'&nbsp;&nbsp;<span style="color:#2BB5A5;font-size:0.75rem">{pm_goals}</span>'
+            f'<br>{kpi_html}</div>',
+            unsafe_allow_html=True,
+        )
+
     # ── Plan tables ───────────────────────────────────────────────────────────
     grand_totals = {g: {ch: [] for ch in chs} for g, chs in goal_channels.items()}
 
     for mkt in s_markets:
         mkt_budget = s_market_budgets[mkt]
-        st.subheader(MARKET_LABELS[mkt])
+
+        # Country heading with pin toggle
+        h_col, pin_col = st.columns([12, 1])
+        is_pinned = (st.session_state.get(f'pinned_country_{sid}') == mkt)
+        h_col.subheader(MARKET_LABELS[mkt])
+        pin_icon = '☑' if is_pinned else '☐'
+        pin_tip  = 'Unpin this country' if is_pinned else 'Pin to top for comparison while scrolling'
+        if pin_col.button(pin_icon, key=f'pin_{mkt}_{sid}',
+                          use_container_width=True, help=pin_tip):
+            if is_pinned:
+                st.session_state.pop(f'pinned_country_{sid}', None)
+            else:
+                st.session_state[f'pinned_country_{sid}'] = mkt
+            st.rerun()
 
         if len(selected_goals) > 1:
             goal_tabs = st.tabs(selected_goals)
@@ -1061,6 +1100,23 @@ def _render_scenario(sid):
             goal_chs = goal_channels[goal]
             ch_budgets = _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid)
             render_goal_section(mkt, goal, goal_chs, ch_budgets, periods, grand_totals, sid)
+
+        # Cache KPI totals for the pinned panel (available on next render)
+        if mkt == st.session_state.get(f'pinned_country_{sid}'):
+            kpi_cache = {}
+            for g in selected_goals:
+                for ch in goal_channels[g]:
+                    rows = grand_totals[g][ch]
+                    if rows:
+                        t = rows[-1].iloc[0]
+                        parts = [
+                            f'{COL_FMT[c][0]}: {COL_FMT[c][1](t[c])}'
+                            for c in ['impressions', 'reach', 'views', 'clicks', 'sessions', 'conversions']
+                            if c in t.index and t[c] > 0
+                        ]
+                        if parts:
+                            kpi_cache[f'{g} · {ch}'] = ' | '.join(parts[:3])
+            st.session_state[f'cached_kpis_{pinned_mkt}_{sid}'] = kpi_cache
 
         st.divider()
 
