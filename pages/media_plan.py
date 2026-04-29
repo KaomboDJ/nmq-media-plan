@@ -375,7 +375,7 @@ def _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid=0):
 def render_goal_section(mkt, goal, selected_channels, ch_budgets, periods, grand_totals, sid=0):
     """Render benchmarks + table + funnel for one market/goal combo."""
     bm_all = {}
-    with st.expander('Edit benchmarks', expanded=False):
+    with st.expander('Edit benchmarks', expanded=True):
         for ch in selected_channels:
             st.markdown(f'**{ch}**')
             bm_all[ch] = benchmark_inputs(ch, mkt, goal, sid)
