@@ -7,6 +7,18 @@ import streamlit as st
 
 KPI_MATRIX = {
     'Awareness': {
+        'Display': {
+            'Responsive Display / Banner': [
+                {'metric': 'CPM',           'badge': 'core'},
+                {'metric': 'Reach',         'badge': 'core'},
+                {'metric': 'Frequency',     'badge': 'core'},
+                {'metric': 'Impressions',   'badge': 'secondary'},
+                {'metric': 'Clicks / CTR',  'badge': 'diagnostic',
+                 'note': 'CTR is very low on display (~0.1–0.3%) — not a meaningful KPI at awareness stage.'},
+                {'metric': 'CPC',           'badge': 'diagnostic',
+                 'note': 'Not primary — display is CPM-bought.'},
+            ],
+        },
         'YouTube': {
             'Skippable in-stream': [
                 {'metric': 'CPM',                  'badge': 'core'},
@@ -66,6 +78,17 @@ KPI_MATRIX = {
         },
     },
     'Consideration': {
+        'Display': {
+            'Responsive Display / Banner': [
+                {'metric': 'Clicks',               'badge': 'core'},
+                {'metric': 'CTR',                  'badge': 'core',
+                 'note': 'Compare vs. benchmark (~0.1–0.3%) not vs. search/social.'},
+                {'metric': 'CPC',                  'badge': 'core'},
+                {'metric': 'Landing Page Sessions', 'badge': 'secondary'},
+                {'metric': 'CPM',                  'badge': 'secondary'},
+                {'metric': 'Impressions',          'badge': 'diagnostic'},
+            ],
+        },
         'YouTube': {
             'Skippable in-stream': [
                 {'metric': 'Engaged Views',      'badge': 'core',
@@ -116,6 +139,19 @@ KPI_MATRIX = {
         },
     },
     'Conversion': {
+        'Display': {
+            'Remarketing / Responsive Display': [
+                {'metric': 'CPA',         'badge': 'core'},
+                {'metric': 'Conversions', 'badge': 'core'},
+                {'metric': 'CVR',         'badge': 'core',
+                 'note': 'Conversions / Clicks — expect low absolute CTR but reasonable CVR if audience is warm.'},
+                {'metric': 'CPC',         'badge': 'secondary'},
+                {'metric': 'Clicks',      'badge': 'secondary'},
+                {'metric': 'View-through Conversions', 'badge': 'caution',
+                 'note': 'Very easily inflated on display — verify attribution window carefully.'},
+                {'metric': 'Impressions / CPM', 'badge': 'diagnostic'},
+            ],
+        },
         'YouTube': {
             'Demand Gen / Action': [
                 {'metric': 'CPA',         'badge': 'core'},
@@ -177,7 +213,7 @@ BADGE_CSS = {
     'diagnostic': ('background:#4b5563; color:#fff',  'Diagnostic'),
 }
 
-CHANNEL_ICON = {'YouTube': '▶', 'Search': '🔍', 'LinkedIn': '💼'}
+CHANNEL_ICON = {'Display': '🖼', 'YouTube': '▶', 'Search': '🔍', 'LinkedIn': '💼'}
 
 PHASE_COLOR = {
     'Awareness':     '#7c3aed',
@@ -250,7 +286,7 @@ st.markdown("""
 
 # ── Filters ───────────────────────────────────────────────────────────────────
 all_phases   = list(KPI_MATRIX.keys())
-all_channels = ['YouTube', 'Search', 'LinkedIn']
+all_channels = ['Display', 'YouTube', 'Search', 'LinkedIn']
 
 filter_col1, filter_col2 = st.columns([1, 1])
 with filter_col1:

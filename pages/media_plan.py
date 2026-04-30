@@ -57,6 +57,9 @@ def _default_bench(cpm_yt, cpm_li, view_rate, ctr_yt, ctr_li, freq,
                    cpc_s, ctr_s, c2s_yt=0.80, c2s_li=0.82, c2s_s=0.86,
                    cr=0.02, l2m=0.20, m2s=0.30):
     shared = {'conv_rate': cr, 'lead_to_mql': l2m, 'mql_to_sql': m2s}
+    # Display CPM is ~30% of YouTube; CTR is much lower (~0.15%) due to banner format;
+    # click intent is lower so click_to_session is also lower (~0.70).
+    cpm_dis = round(cpm_yt * 0.30, 1)
     return {
         'YouTube':  {'cpm': cpm_yt, 'view_rate': view_rate, 'ctr': ctr_yt,
                      'frequency': freq, 'click_to_session': c2s_yt, **shared},
@@ -64,6 +67,8 @@ def _default_bench(cpm_yt, cpm_li, view_rate, ctr_yt, ctr_li, freq,
                      'frequency': freq, 'click_to_session': c2s_li, **shared},
         'Search':   {'cpc': cpc_s,  'ctr': ctr_s,
                      'click_to_session': c2s_s, **shared},
+        'Display':  {'cpm': cpm_dis, 'ctr': 0.0015,
+                     'frequency': 4.0, 'click_to_session': 0.70, **shared},
     }
 
 BENCH = {
@@ -103,6 +108,7 @@ CH_COLORS = {
     'YouTube':  ['#1F497D', '#437CA3', '#6B9FBF', '#9FC3D5', '#C5DCE8'],
     'LinkedIn': ['#1F6152', '#2E8A72', '#4DB896', '#7DCFB0', '#A8E4D0'],
     'Search':   ['#4285F4', '#5A95F5', '#74A5F6', '#8EB5F7', '#A8C5F8'],
+    'Display':  ['#B45309', '#D97706', '#F59E0B', '#FCD34D', '#FEF3C7'],
 }
 
 ALL_GOALS = ['Awareness', 'Traffic', 'Conversion']
@@ -202,15 +208,19 @@ _CONVERSION_COLS = ['Budget', 'impressions', 'eff_cpm', 'clicks', 'cpc',
                     'mql_to_sql', 'sql', 'cost_per_sql']
 
 PHASE_COLS = {
-    ('YouTube', 'Awareness'):   ['Budget', 'impressions', 'reach', 'views', 'cpv', 'ctr', 'clicks', 'cpc'],
-    ('YouTube', 'Traffic'):     _TRAFFIC_COLS,
-    ('YouTube', 'Conversion'):  _CONVERSION_COLS,
-    ('Search',  'Awareness'):   ['Budget', 'impressions', 'ctr', 'clicks', 'cpc'],
-    ('Search',  'Traffic'):     _TRAFFIC_COLS,
-    ('Search',  'Conversion'):  _CONVERSION_COLS,
-    ('LinkedIn','Awareness'):   ['Budget', 'impressions', 'reach', 'ctr', 'clicks', 'cpc'],
-    ('LinkedIn','Traffic'):     _TRAFFIC_COLS,
-    ('LinkedIn','Conversion'):  _CONVERSION_COLS,
+    ('YouTube',  'Awareness'):  ['Budget', 'impressions', 'reach', 'views', 'cpv', 'ctr', 'clicks', 'cpc'],
+    ('YouTube',  'Traffic'):    _TRAFFIC_COLS,
+    ('YouTube',  'Conversion'): _CONVERSION_COLS,
+    ('Search',   'Awareness'):  ['Budget', 'impressions', 'ctr', 'clicks', 'cpc'],
+    ('Search',   'Traffic'):    _TRAFFIC_COLS,
+    ('Search',   'Conversion'): _CONVERSION_COLS,
+    ('LinkedIn', 'Awareness'):  ['Budget', 'impressions', 'reach', 'ctr', 'clicks', 'cpc'],
+    ('LinkedIn', 'Traffic'):    _TRAFFIC_COLS,
+    ('LinkedIn', 'Conversion'): _CONVERSION_COLS,
+    # Display: banner/image — no views/cpv; reach via impressions/frequency
+    ('Display',  'Awareness'):  ['Budget', 'impressions', 'reach', 'eff_cpm', 'ctr', 'clicks', 'cpc'],
+    ('Display',  'Traffic'):    _TRAFFIC_COLS,
+    ('Display',  'Conversion'): _CONVERSION_COLS,
 }
 
 
@@ -366,7 +376,7 @@ def make_funnel(df, goal, channel, title):
             stages = [('Impressions', 'impressions'), ('Clicks', 'clicks'), ('Sessions', 'sessions')]
         else:
             stages = [('Impressions', 'impressions'), ('Clicks', 'clicks'), ('Sessions', 'sessions'), ('Conversions', 'conversions')]
-    else:  # LinkedIn
+    else:  # LinkedIn / Display
         if goal == 'Awareness':
             stages = [('Impressions', 'impressions'), ('Reach', 'reach'), ('Clicks', 'clicks')]
         elif goal == 'Traffic':
@@ -419,7 +429,7 @@ def _apply_template_data(sid, tpl):
     for goal in ALL_GOALS:
         goal_on = goal in tpl['goals']
         st.session_state[f'sb_goal_{goal}_{sid}'] = goal_on
-        for ch, key in [('YouTube', 'sb_yt'), ('Search', 'sb_s'), ('LinkedIn', 'sb_li')]:
+        for ch, key in [('YouTube', 'sb_yt'), ('Search', 'sb_s'), ('LinkedIn', 'sb_li'), ('Display', 'sb_dis')]:
             st.session_state[f'{key}_{goal}_{sid}'] = goal_on and ch in tpl['goals'].get(goal, [])
     st.rerun()
 
@@ -435,9 +445,10 @@ def _current_as_template(sid):
     for goal in ALL_GOALS:
         if ss.get(f'sb_goal_{goal}_{sid}', False):
             chs = []
-            if ss.get(f'sb_yt_{goal}_{sid}', False): chs.append('YouTube')
-            if ss.get(f'sb_s_{goal}_{sid}',  False): chs.append('Search')
-            if ss.get(f'sb_li_{goal}_{sid}', False): chs.append('LinkedIn')
+            if ss.get(f'sb_yt_{goal}_{sid}',  False): chs.append('YouTube')
+            if ss.get(f'sb_s_{goal}_{sid}',   False): chs.append('Search')
+            if ss.get(f'sb_li_{goal}_{sid}',  False): chs.append('LinkedIn')
+            if ss.get(f'sb_dis_{goal}_{sid}', False): chs.append('Display')
             if chs:
                 goals[goal] = chs
     return {
@@ -466,11 +477,11 @@ def _apply_bench_preset(ch, mkt, goal, sid, preset_name):
             (f'click_to_session_{mkt}_{ch}_{goal}_{sid}', round(b.get('click_to_session', 0.80) * 100, 0)),
             (f'conv_rate_{mkt}_{ch}_{goal}_{sid}',        round(b.get('conv_rate', 0.02) * 100 * f['conv_rate'], 1)),
         ]
-    else:
+    else:  # LinkedIn / Display
         keys = [
             (f'cpm_{mkt}_{ch}_{goal}_{sid}',              round(b['cpm'] * f['cpm'], 2)),
             (f'ctr_{mkt}_{ch}_{goal}_{sid}',              round(b['ctr'] * 100 * f['ctr'], 2)),
-            (f'click_to_session_{mkt}_{ch}_{goal}_{sid}', round(b.get('click_to_session', 0.82) * 100, 0)),
+            (f'click_to_session_{mkt}_{ch}_{goal}_{sid}', round(b.get('click_to_session', 0.70) * 100, 0)),
             (f'conv_rate_{mkt}_{ch}_{goal}_{sid}',        round(b.get('conv_rate', 0.02) * 100 * f['conv_rate'], 1)),
         ]
     for k, v in keys:
@@ -593,15 +604,16 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
                 ('mql_to_sql',  'MQL→SQL %',      b.get('mql_to_sql',  0.30) * 100, 1.0, '%.0f', True),
             ]
 
-    else:  # LinkedIn
+    else:  # LinkedIn / Display
+        c2s_default = 0.70 if ch == 'Display' else 0.82
         fields = [
-            ('cpm',       'CPM (€)',   b['cpm'],                0.5,  '%.2f', False),
-            ('ctr',       'CTR %',     b['ctr'] * 100,          0.01, '%.2f', True),
-            ('frequency', 'Frequency', b.get('frequency', 3.0), 0.5,  '%.1f', False),
+            ('cpm',       'CPM (€)',   b['cpm'],                0.1,  '%.2f', False),
+            ('ctr',       'CTR %',     b['ctr'] * 100,          0.01, '%.3f', True),
+            ('frequency', 'Frequency', b.get('frequency', 4.0 if ch == 'Display' else 3.0), 0.5, '%.1f', False),
         ]
         if goal in ('Traffic', 'Conversion'):
             fields.append(('click_to_session', 'Click→Session %',
-                           b.get('click_to_session', 0.82) * 100, 1.0, '%.0f', True))
+                           b.get('click_to_session', c2s_default) * 100, 1.0, '%.0f', True))
         if goal == 'Conversion':
             fields += [
                 ('conv_rate',   'Session→Lead %', b.get('conv_rate',   0.02) * 100, 0.1, '%.1f', True),
@@ -623,8 +635,8 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
     # Carry over non-editable defaults
     if ch == 'YouTube' and goal != 'Awareness':
         bm['view_rate'] = b.get('view_rate', 0.31)
-    if ch in ('YouTube', 'LinkedIn') and 'frequency' not in bm:
-        bm['frequency'] = b.get('frequency', 3.0)
+    if ch in ('YouTube', 'LinkedIn', 'Display') and 'frequency' not in bm:
+        bm['frequency'] = b.get('frequency', 4.0 if ch == 'Display' else 3.0)
     if 'click_to_session' not in bm:
         bm['click_to_session'] = b.get('click_to_session', 0.80)
     if 'conv_rate' not in bm:
@@ -778,11 +790,13 @@ def _get_bm_ss(ch, mkt, goal, sid):
                                  if goal == 'Awareness' else b.get('view_rate', 0.31))
         bm['click_to_session']= _pct('click_to_session',b.get('click_to_session', 0.80))
         bm['conv_rate']       = _pct('conv_rate',       b.get('conv_rate', 0.02))
-    else:  # LinkedIn
+    else:  # LinkedIn / Display
+        c2s_default = b.get('click_to_session', 0.70 if ch == 'Display' else 0.82)
+        freq_default = b.get('frequency', 4.0 if ch == 'Display' else 3.0)
         bm['cpm']             = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
         bm['ctr']             = _pct('ctr',             b['ctr'])
-        bm['frequency']       = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
-        bm['click_to_session']= _pct('click_to_session',b.get('click_to_session', 0.82))
+        bm['frequency']       = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', freq_default)
+        bm['click_to_session']= _pct('click_to_session', c2s_default)
         bm['conv_rate']       = _pct('conv_rate',       b.get('conv_rate', 0.02))
 
     # MQL/SQL ratios — present for all channels when goal is Conversion
@@ -854,6 +868,10 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
         ('Search',   'Awareness'):   ['cpc', 'ctr'],
         ('Search',   'Traffic'):     ['cpc', 'ctr', 'click_to_session'],
         ('Search',   'Conversion'):  ['cpc', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        # Display: no view_rate (banner format); CTR much lower than social/video
+        ('Display',  'Awareness'):   ['cpm', 'ctr', 'frequency'],
+        ('Display',  'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
+        ('Display',  'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
     }
     _BM_LABELS = {
         'cpm': 'CPM (€)', 'cpc': 'CPC (€)', 'view_rate': 'View Rate',
@@ -1144,14 +1162,17 @@ _MARKET_LANGUAGE = {
     'SK': 'Slovak', 'SI': 'Slovenian', 'ES': 'Spanish', 'SE': 'Swedish',
     'CH': 'German', 'UK': 'English',
 }
-_GADS_TYPE = {'YouTube': 'Video', 'Search': 'Search'}
+_GADS_TYPE = {'YouTube': 'Video', 'Search': 'Search', 'Display': 'Display'}
 _GADS_BID = {
-    ('YouTube', 'Awareness'):  'Target CPM',
-    ('YouTube', 'Traffic'):    'Maximize conversions',
-    ('YouTube', 'Conversion'): 'Target CPA',
-    ('Search',  'Awareness'):  'Manual CPC',
-    ('Search',  'Traffic'):    'Maximize clicks',
-    ('Search',  'Conversion'): 'Target CPA',
+    ('YouTube',  'Awareness'):  'Target CPM',
+    ('YouTube',  'Traffic'):    'Maximize conversions',
+    ('YouTube',  'Conversion'): 'Target CPA',
+    ('Search',   'Awareness'):  'Manual CPC',
+    ('Search',   'Traffic'):    'Maximize clicks',
+    ('Search',   'Conversion'): 'Target CPA',
+    ('Display',  'Awareness'):  'Target CPM',
+    ('Display',  'Traffic'):    'Maximize clicks',
+    ('Display',  'Conversion'): 'Target CPA',
 }
 _GADS_COLS = [
     'Campaign', 'Campaign Status', 'Campaign Type',
@@ -1199,7 +1220,7 @@ def _build_gads_csv_scenario(s_data, sid, campaign_name, start_date, end_date):
                 daily      = round(ch_buds[ch] / days, 2)
                 name       = f'{campaign_name}_{mkt}_{goal}_{ch}'
                 bid        = _GADS_BID.get((ch, goal), 'Manual CPC')
-                target_cpm = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', '') if ch == 'YouTube' else ''
+                target_cpm = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', '') if ch in ('YouTube', 'Display') else ''
                 default_cpc = ss.get(f'cpc_{mkt}_{ch}_{goal}_{sid}', '') if ch == 'Search' else ''
 
                 r = _empty()
@@ -1444,20 +1465,22 @@ def _render_scenario(sid):
 
     # ── Goals & Channels ─────────────────────────────────────────────────────
     st.markdown('**Goals & Channels**')
-    hc = st.columns([2, 1, 1, 1])
+    hc = st.columns([2, 1, 1, 1, 1])
     hc[1].markdown('<small>YT</small>', unsafe_allow_html=True)
-    hc[2].markdown('<small>Search</small>', unsafe_allow_html=True)
-    hc[3].markdown('<small>LinkedIn</small>', unsafe_allow_html=True)
+    hc[2].markdown('<small>Display</small>', unsafe_allow_html=True)
+    hc[3].markdown('<small>Search</small>', unsafe_allow_html=True)
+    hc[4].markdown('<small>LinkedIn</small>', unsafe_allow_html=True)
 
     goal_channels = {}
     for goal_key in ALL_GOALS:
-        rc = st.columns([2, 1, 1, 1])
-        goal_on = rc[0].checkbox(goal_key, value=False, key=f'sb_goal_{goal_key}_{sid}')
-        yt_on = rc[1].checkbox('YT', value=False, key=f'sb_yt_{goal_key}_{sid}', label_visibility='collapsed', disabled=not goal_on)
-        s_on  = rc[2].checkbox('S',  value=False, key=f'sb_s_{goal_key}_{sid}',  label_visibility='collapsed', disabled=not goal_on)
-        li_on = rc[3].checkbox('LI', value=False, key=f'sb_li_{goal_key}_{sid}', label_visibility='collapsed', disabled=not goal_on)
+        rc = st.columns([2, 1, 1, 1, 1])
+        goal_on  = rc[0].checkbox(goal_key, value=False, key=f'sb_goal_{goal_key}_{sid}')
+        yt_on    = rc[1].checkbox('YT',  value=False, key=f'sb_yt_{goal_key}_{sid}',  label_visibility='collapsed', disabled=not goal_on)
+        dis_on   = rc[2].checkbox('Dis', value=False, key=f'sb_dis_{goal_key}_{sid}', label_visibility='collapsed', disabled=not goal_on)
+        s_on     = rc[3].checkbox('S',   value=False, key=f'sb_s_{goal_key}_{sid}',   label_visibility='collapsed', disabled=not goal_on)
+        li_on    = rc[4].checkbox('LI',  value=False, key=f'sb_li_{goal_key}_{sid}',  label_visibility='collapsed', disabled=not goal_on)
         if goal_on:
-            chs = [ch for ch, on in [('YouTube', yt_on), ('Search', s_on), ('LinkedIn', li_on)] if on]
+            chs = [ch for ch, on in [('YouTube', yt_on), ('Display', dis_on), ('Search', s_on), ('LinkedIn', li_on)] if on]
             if chs:
                 goal_channels[goal_key] = chs
 
@@ -1509,7 +1532,7 @@ def _render_scenario(sid):
                       help='More budget to cheaper markets to maximise impressions'):
             weights = {}
             for m in s_markets:
-                cpms = [BENCH[m][ch]['cpm'] for ch in ['YouTube', 'LinkedIn']
+                cpms = [BENCH[m][ch]['cpm'] for ch in ['YouTube', 'LinkedIn', 'Display']
                         if ch in BENCH[m] and 'cpm' in BENCH[m][ch]]
                 weights[m] = 1.0 / (sum(cpms) / len(cpms)) if cpms else 0.1
             total_w = sum(weights.values()) or 1
