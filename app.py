@@ -93,6 +93,7 @@ pg = st.navigation({
     'NMQ Tools': [
         st.Page('pages/media_plan.py', title='Media Plan', icon='📋'),
         st.Page('pages/sdf_export.py', title='Google Ads Export', icon='⬇'),
+        st.Page('pages/kpi_matrix.py', title='KPI Matrix', icon='📊'),
     ]
 })
 pg.run()
