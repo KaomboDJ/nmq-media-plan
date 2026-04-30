@@ -68,9 +68,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Apply pending plan load before any widgets render
+_LOAD_SKIP = {
+    '_pending_load', 'FormSubmitter', '_uploader_v',
+    'dup_', 'remove_', 'tpl_apply_', 'grp_', 'eq_', 'cpm_eff_',
+    'pin_', 'dl_gads_', 'dl_excel', 'btn_', 'preset_',
+}
 if '_pending_load' in st.session_state:
     _load_data = st.session_state.pop('_pending_load')
     for k, v in _load_data.items():
+        if any(k.startswith(s) for s in _LOAD_SKIP):
+            continue
         if isinstance(v, dict) and '__date__' in v:
             st.session_state[k] = date.fromisoformat(v['__date__'])
         else:
