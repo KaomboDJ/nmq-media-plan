@@ -822,20 +822,22 @@ def _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid):
 
 def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end_date, breakdown='Weekly'):
     """
-    One workbook. One tab per country.
-    Layout: goal sections → channel subsection → editable assumptions block → period table.
-    Budget is the only raw input per period; all other columns are Excel formulas.
+    One workbook. One tab per scenario. All countries stacked vertically in the same tab
+    (2-row gap between countries). A Scenario Totals section at the bottom sums across
+    all countries via Excel SUM formulas referencing each country's TOTAL row.
     """
     from openpyxl.utils import get_column_letter
 
     # ── Colour palette ────────────────────────────────────────────────────────
-    C_TITLE  = PatternFill('solid', fgColor='1F3864')
-    C_GOAL   = PatternFill('solid', fgColor='1F3864')
-    C_CH     = PatternFill('solid', fgColor='2E75B6')
-    C_ASSM_H = PatternFill('solid', fgColor='E2EFDA')  # light green — assumptions label row
-    C_ASSM_V = PatternFill('solid', fgColor='FFFDE7')  # light yellow — editable values
-    C_HDR    = PatternFill('solid', fgColor='4472C4')
-    C_TOTAL  = PatternFill('solid', fgColor='CFE1F3')
+    C_TITLE  = PatternFill('solid', fgColor='1F3864')   # dark navy — scenario title / totals
+    C_MKT    = PatternFill('solid', fgColor='2BB5A5')   # NMQ teal  — country header
+    C_GOAL   = PatternFill('solid', fgColor='1F3864')   # dark navy — goal section header
+    C_CH     = PatternFill('solid', fgColor='2E75B6')   # medium blue — channel header
+    C_ASSM_H = PatternFill('solid', fgColor='E2EFDA')   # light green — assumptions labels
+    C_ASSM_V = PatternFill('solid', fgColor='FFFDE7')   # light yellow — editable values
+    C_HDR    = PatternFill('solid', fgColor='4472C4')   # blue — column headers
+    C_TOTAL  = PatternFill('solid', fgColor='CFE1F3')   # light blue — TOTAL rows
+    C_STOT   = PatternFill('solid', fgColor='D6E4F0')   # slightly darker — scenario TOTAL
     C_ODD    = PatternFill('solid', fgColor='FFFFFF')
     C_EVEN   = PatternFill('solid', fgColor='EEF3FB')
 
@@ -845,19 +847,26 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
     AC = Alignment(horizontal='center', vertical='center', wrap_text=True)
     AL = Alignment(horizontal='left',   vertical='center')
 
-    _PCT_KEYS = {'ctr', 'view_rate', 'click_to_session', 'conv_rate',
-                 'lead_to_mql', 'mql_to_sql', 'cvr'}
-    _EUR_KEYS = {'Budget', 'cpc', 'cpa', 'cpv', 'eff_cpm',
-                 'cost_per_mql', 'cost_per_sql'}
-    _ADDITIVE = {'Budget', 'impressions', 'reach', 'views', 'clicks',
-                 'sessions', 'conversions', 'mql', 'sql'}
+    _PCT_KEYS  = {'ctr', 'view_rate', 'click_to_session', 'conv_rate',
+                  'lead_to_mql', 'mql_to_sql', 'cvr'}
+    _EUR_KEYS  = {'Budget', 'cpc', 'cpa', 'cpv', 'eff_cpm',
+                  'cost_per_mql', 'cost_per_sql'}
+    _ADDITIVE  = {'Budget', 'impressions', 'reach', 'views', 'clicks',
+                  'sessions', 'conversions', 'mql', 'sql'}
+    # Rate cols whose scenario-total value is derived from the summed additive cols
+    _RATE_FROM = {
+        'ctr':              ('clicks',      'impressions'),
+        'click_to_session': ('sessions',    'clicks'),
+        'conv_rate':        ('conversions', 'sessions'),
+        'lead_to_mql':      ('mql',         'conversions'),
+        'mql_to_sql':       ('sql',         'mql'),
+    }
 
     def _num_fmt(key):
         if key in _PCT_KEYS: return '0.00%'
         if key in _EUR_KEYS: return '#,##0.00'
         return '#,##0'
 
-    # ── Benchmark params per (channel, goal) — shown in the assumptions block ─
     _BM_PARAMS = {
         ('YouTube',  'Awareness'):   ['cpm', 'view_rate', 'ctr', 'frequency'],
         ('YouTube',  'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
@@ -868,7 +877,6 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
         ('Search',   'Awareness'):   ['cpc', 'ctr'],
         ('Search',   'Traffic'):     ['cpc', 'ctr', 'click_to_session'],
         ('Search',   'Conversion'):  ['cpc', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
-        # Display: no view_rate (banner format); CTR much lower than social/video
         ('Display',  'Awareness'):   ['cpm', 'ctr', 'frequency'],
         ('Display',  'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
         ('Display',  'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
@@ -885,125 +893,56 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
     }
 
     def _formula(key, r, col_map, bm_map, ch):
-        """Return Excel formula string for a derived column at row r, or None for raw inputs."""
         L = col_map
-
-        def ref(k):   # same-row cell ref
-            return f"{L.get(k, 'A')}{r}"
-
-        def bm(k):    # absolute assumption cell ref
-            return bm_map.get(k, '0')
-
-        def ie(f):
-            return f'=IFERROR({f},"")'
-
-        if key == 'Budget':
-            return None
-
+        def ref(k):   return f"{L.get(k,'A')}{r}"
+        def bm(k):    return bm_map.get(k, '0')
+        def ie(f):    return f'=IFERROR({f},"")'
+        if key == 'Budget':       return None
         if key == 'impressions':
-            if ch == 'Search':
-                return ie(f"{ref('clicks')}/{bm('ctr')}")
-            return ie(f"{ref('Budget')}/{bm('cpm')}*1000")
-
-        if key == 'reach':
-            return ie(f"{ref('impressions')}/{bm('frequency')}")
-
-        if key == 'views':
-            return ie(f"{ref('impressions')}*{bm('view_rate')}")
-
+            return ie(f"{ref('clicks')}/{bm('ctr')}") if ch == 'Search' \
+                   else ie(f"{ref('Budget')}/{bm('cpm')}*1000")
+        if key == 'reach':        return ie(f"{ref('impressions')}/{bm('frequency')}")
+        if key == 'views':        return ie(f"{ref('impressions')}*{bm('view_rate')}")
         if key == 'clicks':
-            if ch == 'Search':
-                return ie(f"{ref('Budget')}/{bm('cpc')}")
-            return ie(f"{ref('impressions')}*{bm('ctr')}")
-
-        if key == 'ctr':
-            return ie(f"{ref('clicks')}/{ref('impressions')}")
-
-        if key == 'cpc':
-            return ie(f"{ref('Budget')}/{ref('clicks')}")
-
-        if key == 'cpv':
-            return ie(f"{ref('Budget')}/{ref('views')}")
-
-        if key == 'eff_cpm':
-            return ie(f"{ref('Budget')}/{ref('impressions')}*1000")
-
-        if key == 'click_to_session':
-            return f"={bm('click_to_session')}"
-
-        if key == 'sessions':
-            return ie(f"{ref('clicks')}*{bm('click_to_session')}")
-
-        if key == 'conv_rate':
-            return f"={bm('conv_rate')}"
-
-        if key == 'conversions':
-            return ie(f"{ref('sessions')}*{bm('conv_rate')}")
-
-        if key == 'cpa':
-            return ie(f"{ref('Budget')}/{ref('conversions')}")
-
-        if key == 'lead_to_mql':
-            return f"={bm('lead_to_mql')}"
-
-        if key == 'mql':
-            return ie(f"{ref('conversions')}*{bm('lead_to_mql')}")
-
-        if key == 'cost_per_mql':
-            return ie(f"{ref('Budget')}/{ref('mql')}")
-
-        if key == 'mql_to_sql':
-            return f"={bm('mql_to_sql')}"
-
-        if key == 'sql':
-            return ie(f"{ref('mql')}*{bm('mql_to_sql')}")
-
-        if key == 'cost_per_sql':
-            return ie(f"{ref('Budget')}/{ref('sql')}")
-
+            return ie(f"{ref('Budget')}/{bm('cpc')}") if ch == 'Search' \
+                   else ie(f"{ref('impressions')}*{bm('ctr')}")
+        if key == 'ctr':          return ie(f"{ref('clicks')}/{ref('impressions')}")
+        if key == 'cpc':          return ie(f"{ref('Budget')}/{ref('clicks')}")
+        if key == 'cpv':          return ie(f"{ref('Budget')}/{ref('views')}")
+        if key == 'eff_cpm':      return ie(f"{ref('Budget')}/{ref('impressions')}*1000")
+        if key == 'click_to_session': return f"={bm('click_to_session')}"
+        if key == 'sessions':     return ie(f"{ref('clicks')}*{bm('click_to_session')}")
+        if key == 'conv_rate':    return f"={bm('conv_rate')}"
+        if key == 'conversions':  return ie(f"{ref('sessions')}*{bm('conv_rate')}")
+        if key == 'cpa':          return ie(f"{ref('Budget')}/{ref('conversions')}")
+        if key == 'lead_to_mql':  return f"={bm('lead_to_mql')}"
+        if key == 'mql':          return ie(f"{ref('conversions')}*{bm('lead_to_mql')}")
+        if key == 'cost_per_mql': return ie(f"{ref('Budget')}/{ref('mql')}")
+        if key == 'mql_to_sql':   return f"={bm('mql_to_sql')}"
+        if key == 'sql':          return ie(f"{ref('mql')}*{bm('mql_to_sql')}")
+        if key == 'cost_per_sql': return ie(f"{ref('Budget')}/{ref('sql')}")
         return None
 
     def _total_formula(key, r, col_map, bm_map, first_r, last_r, ch):
-        """TOTAL row: SUM for additive cols, derived formula for costs/rates."""
         L = col_map
-
-        def sumf(k):
-            return f"=SUM({L.get(k,'A')}{first_r}:{L.get(k,'A')}{last_r})"
-
         if key in _ADDITIVE:
-            return sumf(key)
-
-        # rate columns just reference the benchmark (same across all periods)
+            return f"=SUM({L.get(key,'A')}{first_r}:{L.get(key,'A')}{last_r})"
         if key in ('click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'):
             return f"={bm_map.get(key, '0')}"
-
         return _formula(key, r, col_map, bm_map, ch)
 
-    # ── Tab grouping ──────────────────────────────────────────────────────────
-    market_count = {}
-    for s in all_scenarios:
-        for mkt in s['selected_markets']:
-            market_count[mkt] = market_count.get(mkt, 0) + 1
-
-    tabs = []
-    for s, sid in zip(all_scenarios, scenario_ids):
-        for mkt in s['selected_markets']:
-            if market_count[mkt] > 1:
-                tab_name = f"{MARKET_LABELS.get(mkt, mkt)} S{sid + 1}"[:31]
-            else:
-                tab_name = MARKET_LABELS.get(mkt, mkt)[:31]
-            tabs.append((tab_name, s, sid, mkt))
-
+    # ── Setup ─────────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
     periods    = generate_periods(start_date, end_date, breakdown)
     total_days = sum(p['days'] for p in periods) or 1
+    flight     = f"{start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
 
-    for tab_name, s, sid, mkt in tabs:
+    # ── One tab per scenario ──────────────────────────────────────────────────
+    for s, sid in zip(all_scenarios, scenario_ids):
+        tab_name = s['name'][:31]
         ws = wb.create_sheet(title=tab_name)
-        mkt_label  = MARKET_LABELS.get(mkt, mkt)
-        mkt_budget = s['market_budgets'][mkt]
 
         max_data_cols = max(
             (len(PHASE_COLS.get((ch, goal), [])) for goal, chs in s['goal_channels'].items()
@@ -1011,49 +950,176 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
         )
         n_cols_total = 1 + max_data_cols
 
-        # ── Title rows ───────────────────────────────────────────────────────
-        row = 1
-        flight = f"{start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
-        title  = f"{mkt_label}  —  {campaign_name}  —  {s['name']}"
-        for txt, fnt, ht in [
-            (title, Font(color='FFFFFF', bold=True, size=13), 22),
-            (f"Budget: €{mkt_budget:,.0f}  |  {flight}  |  {breakdown}",
-             Font(color='FFFFFF', size=10), 15),
-        ]:
-            c = ws.cell(row=row, column=1, value=txt)
-            c.fill = C_TITLE; c.font = fnt; c.alignment = AL
-            ws.merge_cells(start_row=row, start_column=1,
-                           end_row=row, end_column=n_cols_total)
-            ws.row_dimensions[row].height = ht
-            row += 1
-        row += 1
+        def _merge(r, fill, font, txt, height=18, align=AL):
+            c = ws.cell(row=r, column=1, value=txt)
+            c.fill = fill; c.font = font; c.alignment = align
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols_total)
+            ws.row_dimensions[r].height = height
 
-        # ── Goal sections ─────────────────────────────────────────────────────
+        # ── Scenario title rows ───────────────────────────────────────────────
+        row = 1
+        _merge(row, C_TITLE, Font(color='FFFFFF', bold=True, size=13),
+               f"{s['name']}  —  {campaign_name}", height=22)
+        row += 1
+        _merge(row, C_TITLE, Font(color='FFFFFF', size=10),
+               f"Total Budget: €{s['market_budgets'].get(s['selected_markets'][0] if s['selected_markets'] else '', 0):,.0f}"
+               f"  (see per-country below)  |  {flight}  |  {breakdown}", height=15)
+        row += 2  # title rows + blank
+
+        # ── Track each country's TOTAL row position for scenario-totals SUM ──
+        # total_tracker[(goal, ch)] = {'rows': [row_nums], 'col_keys': [...], 'col_map': {...}}
+        total_tracker = {}
+
+        # ── Countries — stacked vertically ───────────────────────────────────
+        for mkt_idx, mkt in enumerate(s['selected_markets']):
+            mkt_label  = MARKET_LABELS.get(mkt, mkt)
+            mkt_budget = s['market_budgets'][mkt]
+            total_budget_all = sum(s['market_budgets'].values()) or 1
+            mkt_pct = mkt_budget / total_budget_all * 100
+
+            # Country header (NMQ teal)
+            _merge(row, C_MKT, F_WHITE_B,
+                   f"{mkt_label}  —  €{mkt_budget:,.0f}  ({mkt_pct:.0f}%)", height=20,
+                   align=Alignment(horizontal='center', vertical='center'))
+            row += 1
+
+            for goal in ['Awareness', 'Traffic', 'Conversion']:
+                if goal not in s['goal_channels']:
+                    continue
+                goal_chs   = s['goal_channels'][goal]
+                ch_budgets = _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid)
+
+                # Goal header
+                _merge(row, C_GOAL, F_WHITE_B, goal.upper(), height=18,
+                       align=Alignment(horizontal='center', vertical='center'))
+                row += 1
+
+                for ch in goal_chs:
+                    ch_bud    = ch_budgets.get(ch, 0)
+                    bm_data   = _get_bm_ss(ch, mkt, goal, sid)
+                    col_keys  = PHASE_COLS.get((ch, goal), list(_TRAFFIC_COLS))
+                    n_ch_cols = len(col_keys) + 1
+                    col_map   = {key: get_column_letter(2 + i) for i, key in enumerate(col_keys)}
+                    daily_bud = ch_bud / total_days if total_days else 0
+
+                    # Channel sub-header
+                    c = ws.cell(row=row, column=1,
+                                value=f"{ch}     Daily Budget: €{daily_bud:,.2f} / day")
+                    c.fill = C_CH; c.font = F_WHITE_B
+                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    ws.merge_cells(start_row=row, start_column=1,
+                                   end_row=row, end_column=n_ch_cols)
+                    ws.row_dimensions[row].height = 18
+                    row += 1
+
+                    # Assumptions block
+                    bm_params = _BM_PARAMS.get((ch, goal), [])
+                    c = ws.cell(row=row, column=1,
+                                value='ASSUMPTIONS  —  edit the yellow cells to recalculate the whole table')
+                    c.fill = C_ASSM_H; c.font = Font(italic=True, size=9, color='375623')
+                    c.alignment = AL
+                    ws.merge_cells(start_row=row, start_column=1,
+                                   end_row=row, end_column=n_ch_cols)
+                    ws.row_dimensions[row].height = 14
+                    row += 1
+
+                    bm_col_map = {p: get_column_letter(2 + i) for i, p in enumerate(bm_params)}
+                    for i, param in enumerate(bm_params):
+                        c = ws.cell(row=row, column=2 + i, value=_BM_LABELS.get(param, param))
+                        c.fill = C_ASSM_H; c.font = Font(bold=True, size=9, color='375623')
+                        c.alignment = AC
+                    ws.row_dimensions[row].height = 14
+                    row += 1
+
+                    bm_val_row = row
+                    bm_map     = {p: f'${bm_col_map[p]}${bm_val_row}' for p in bm_params}
+                    for i, param in enumerate(bm_params):
+                        c = ws.cell(row=row, column=2 + i, value=bm_data.get(param, 0))
+                        c.fill = C_ASSM_V; c.font = Font(bold=True, size=10); c.alignment = AC
+                        c.number_format = _BM_NUM_FMT.get(param, 'General')
+                    ws.row_dimensions[row].height = 18
+                    row += 2  # values + blank
+
+                    # Column headers
+                    c = ws.cell(row=row, column=1, value='PERIOD')
+                    c.fill = C_HDR; c.font = F_WHITE_B; c.alignment = AC
+                    for ci, key in enumerate(col_keys, 2):
+                        c = ws.cell(row=row, column=ci,
+                                    value=COL_FMT[key][0] if key in COL_FMT else key)
+                        c.fill = C_HDR; c.font = F_WHITE_B; c.alignment = AC
+                    ws.row_dimensions[row].height = 28
+                    row += 1
+
+                    # Period data rows
+                    first_data_row = row
+                    for r_idx, p in enumerate(periods):
+                        bud  = ch_bud * p['days'] / total_days if total_days else 0
+                        fill = C_ODD if r_idx % 2 == 0 else C_EVEN
+                        c = ws.cell(row=row, column=1, value=str(p['label']))
+                        c.fill = fill; c.font = F_BOLD; c.alignment = AC
+                        for ci, key in enumerate(col_keys, 2):
+                            if key == 'Budget':
+                                c = ws.cell(row=row, column=ci, value=bud)
+                            else:
+                                f = _formula(key, row, col_map, bm_map, ch)
+                                c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
+                            c.fill = fill; c.font = F_NORMAL; c.alignment = AC
+                            c.number_format = _num_fmt(key)
+                        row += 1
+                    last_data_row = row - 1
+
+                    # TOTAL row — track its row number for scenario-totals formulas
+                    total_row_num = row
+                    c = ws.cell(row=row, column=1, value='TOTAL')
+                    c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
+                    for ci, key in enumerate(col_keys, 2):
+                        f = _total_formula(key, row, col_map, bm_map,
+                                           first_data_row, last_data_row, ch)
+                        c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
+                        c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
+                        c.number_format = _num_fmt(key)
+                    ws.row_dimensions[row].height = 15
+                    row += 2
+
+                    k = (goal, ch)
+                    if k not in total_tracker:
+                        total_tracker[k] = {'rows': [], 'col_keys': col_keys, 'col_map': col_map}
+                    total_tracker[k]['rows'].append(total_row_num)
+
+                row += 1  # blank between goals
+
+            # 2-row gap between countries (as requested)
+            if mkt_idx < len(s['selected_markets']) - 1:
+                row += 2
+
+        # ── Scenario Totals ───────────────────────────────────────────────────
+        row += 2
+        _merge(row, C_TITLE, Font(color='FFFFFF', bold=True, size=13),
+               f"SCENARIO TOTALS  —  {s['name']}  —  {len(s['selected_markets'])} countr{'y' if len(s['selected_markets'])==1 else 'ies'}",
+               height=22, align=Alignment(horizontal='center', vertical='center'))
+        row += 2
+
         for goal in ['Awareness', 'Traffic', 'Conversion']:
             if goal not in s['goal_channels']:
                 continue
-            goal_chs   = s['goal_channels'][goal]
-            ch_budgets = _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid)
+            goal_chs = s['goal_channels'][goal]
 
-            c = ws.cell(row=row, column=1, value=goal.upper())
-            c.fill = C_GOAL; c.font = F_WHITE_B
-            c.alignment = Alignment(horizontal='center', vertical='center')
-            ws.merge_cells(start_row=row, start_column=1,
-                           end_row=row, end_column=n_cols_total)
-            ws.row_dimensions[row].height = 20
+            _merge(row, C_GOAL, F_WHITE_B, goal.upper(), height=18,
+                   align=Alignment(horizontal='center', vertical='center'))
             row += 1
 
             for ch in goal_chs:
-                ch_bud   = ch_budgets.get(ch, 0)
-                bm_data  = _get_bm_ss(ch, mkt, goal, sid)
-                col_keys = PHASE_COLS.get((ch, goal), list(_TRAFFIC_COLS))
-                n_ch_cols = len(col_keys) + 1
-                col_map   = {key: get_column_letter(2 + i) for i, key in enumerate(col_keys)}
-                daily_bud = ch_bud / total_days if total_days else 0
+                k = (goal, ch)
+                if k not in total_tracker:
+                    continue
+                tr    = total_tracker[k]
+                ckeys = tr['col_keys']
+                cmap  = tr['col_map']
+                trows = tr['rows']
+                n_ch_cols = len(ckeys) + 1
 
-                # Channel sub-header
-                ch_label = f"{ch}     Daily Budget: €{daily_bud:,.2f} / day"
-                c = ws.cell(row=row, column=1, value=ch_label)
+                # Channel header (no daily budget — this is the aggregate)
+                c = ws.cell(row=row, column=1, value=f"{ch}  —  All Countries Combined")
                 c.fill = C_CH; c.font = F_WHITE_B
                 c.alignment = Alignment(horizontal='center', vertical='center')
                 ws.merge_cells(start_row=row, start_column=1,
@@ -1061,83 +1127,41 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                 ws.row_dimensions[row].height = 18
                 row += 1
 
-                # ── Assumptions block ─────────────────────────────────────────
-                bm_params = _BM_PARAMS.get((ch, goal), [])
-
-                # Banner
-                c = ws.cell(row=row, column=1,
-                            value='ASSUMPTIONS  —  edit the yellow cells to recalculate the whole table')
-                c.fill = C_ASSM_H
-                c.font = Font(italic=True, size=9, color='375623')
-                c.alignment = AL
-                ws.merge_cells(start_row=row, start_column=1,
-                               end_row=row, end_column=n_ch_cols)
-                ws.row_dimensions[row].height = 14
-                row += 1
-
-                # Assumption labels
-                bm_col_map = {p: get_column_letter(2 + i) for i, p in enumerate(bm_params)}
-                for i, param in enumerate(bm_params):
-                    c = ws.cell(row=row, column=2 + i, value=_BM_LABELS.get(param, param))
-                    c.fill = C_ASSM_H
-                    c.font = Font(bold=True, size=9, color='375623')
-                    c.alignment = AC
-                ws.row_dimensions[row].height = 14
-                row += 1
-
-                # Assumption values (editable)
-                bm_val_row = row
-                bm_map = {p: f'${bm_col_map[p]}${bm_val_row}' for p in bm_params}
-                for i, param in enumerate(bm_params):
-                    c = ws.cell(row=row, column=2 + i, value=bm_data.get(param, 0))
-                    c.fill = C_ASSM_V
-                    c.font = Font(bold=True, size=10)
-                    c.alignment = AC
-                    c.number_format = _BM_NUM_FMT.get(param, 'General')
-                ws.row_dimensions[row].height = 18
-                row += 2  # values row + blank spacer
-
-                # ── Column headers ────────────────────────────────────────────
-                c = ws.cell(row=row, column=1, value='PERIOD')
-                c.fill = C_HDR; c.font = F_WHITE_B; c.alignment = AC
-                for ci, key in enumerate(col_keys, 2):
-                    label = COL_FMT[key][0] if key in COL_FMT else key
-                    c = ws.cell(row=row, column=ci, value=label)
+                # Column headers
+                c = ws.cell(row=row, column=1, value='')
+                c.fill = C_HDR; c.alignment = AC
+                for ci, key in enumerate(ckeys, 2):
+                    c = ws.cell(row=row, column=ci,
+                                value=COL_FMT[key][0] if key in COL_FMT else key)
                     c.fill = C_HDR; c.font = F_WHITE_B; c.alignment = AC
                 ws.row_dimensions[row].height = 28
                 row += 1
 
-                # ── Period data rows (Budget = raw value, rest = formulas) ────
-                first_data_row = row
-                for r_idx, p in enumerate(periods):
-                    bud  = ch_bud * p['days'] / total_days if total_days else 0
-                    fill = C_ODD if r_idx % 2 == 0 else C_EVEN
-                    c = ws.cell(row=row, column=1, value=str(p['label']))
-                    c.fill = fill; c.font = F_BOLD; c.alignment = AC
-                    for ci, key in enumerate(col_keys, 2):
-                        if key == 'Budget':
-                            c = ws.cell(row=row, column=ci, value=bud)
+                # Scenario-total row
+                c = ws.cell(row=row, column=1, value='ALL COUNTRIES')
+                c.fill = C_STOT; c.font = F_BOLD; c.alignment = AC
+                for ci, key in enumerate(ckeys, 2):
+                    col_letter = cmap.get(key, 'B')
+                    if key in _ADDITIVE:
+                        refs = ', '.join(f'{col_letter}{r}' for r in trows)
+                        f = f'=IFERROR(SUM({refs}),"")'
+                    elif key in _RATE_FROM:
+                        nk, dk = _RATE_FROM[key]
+                        if nk in cmap and dk in cmap:
+                            f = f'=IFERROR({cmap[nk]}{row}/{cmap[dk]}{row},"")'
                         else:
-                            f = _formula(key, row, col_map, bm_map, ch)
-                            c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
-                        c.fill = fill; c.font = F_NORMAL; c.alignment = AC
-                        c.number_format = _num_fmt(key)
-                    row += 1
-                last_data_row = row - 1
-
-                # ── TOTAL row ─────────────────────────────────────────────────
-                c = ws.cell(row=row, column=1, value='TOTAL')
-                c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
-                for ci, key in enumerate(col_keys, 2):
-                    f = _total_formula(key, row, col_map, bm_map,
-                                       first_data_row, last_data_row, ch)
-                    c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
-                    c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
+                            f = ''
+                    else:
+                        # derived (eff_cpm, cpc, cpv, cpa, cost_per_mql, cost_per_sql)
+                        # reference same row's additive cells — bm_map not needed
+                        f = _formula(key, row, cmap, {}, ch)
+                    c = ws.cell(row=row, column=ci, value=f if f else '')
+                    c.fill = C_STOT; c.font = F_BOLD; c.alignment = AC
                     c.number_format = _num_fmt(key)
-                ws.row_dimensions[row].height = 15
+                ws.row_dimensions[row].height = 18
                 row += 2
 
-            row += 1
+            row += 1  # blank between goals
 
         # ── Column widths ─────────────────────────────────────────────────────
         ws.column_dimensions['A'].width = 18
@@ -1808,42 +1832,55 @@ if compare_tab is not None:
 
             # ── Winner callouts per metric ────────────────────────────────────
             st.markdown('#### Which scenario leads on each KPI?')
-            winner_cols = st.columns(len(ADDITIVE) - 1)  # skip Budget
-            col_idx = 0
-            for col in ADDITIVE:
-                if col == 'Budget':
-                    continue
+            active_cols = [c for c in ADDITIVE if c != 'Budget'
+                           and any(_aggregate_scenario_metrics(s).get(c, 0) > 0 for s in all_scenarios_data)]
+            winner_cols = st.columns(max(len(active_cols), 1))
+            for col_idx, col in enumerate(active_cols):
                 vals = [(s['name'], _aggregate_scenario_metrics(s).get(col, 0)) for s in all_scenarios_data]
                 best = max(vals, key=lambda x: x[1])
-                if best[1] > 0:
-                    winner_cols[col_idx].metric(metric_labels[col], best[0], help=f'Highest {metric_labels[col]} across all scenarios')
-                col_idx += 1
+                winner_cols[col_idx].markdown(
+                    f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;'
+                    f'text-align:center;background:#f8fafc;">'
+                    f'<div style="font-size:0.70rem;color:#64748b;font-weight:600;'
+                    f'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">'
+                    f'{metric_labels[col]}</div>'
+                    f'<div style="font-size:0.82rem;font-weight:700;color:#1e293b;'
+                    f'line-height:1.3;word-break:break-word">{best[0]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             # ── Visual comparison bar charts ──────────────────────────────────
             st.markdown('#### Visual comparison')
             bar_metrics = [c for c in ['impressions','reach','clicks','sessions','conversions']
                            if any(_aggregate_scenario_metrics(s).get(c, 0) > 0 for s in all_scenarios_data)]
             if bar_metrics:
-                bar_cols = st.columns(min(len(bar_metrics), 3))
                 sc_names  = [s['name'] for s in all_scenarios_data]
                 sc_colors = DONUT_PALETTE[:len(all_scenarios_data)]
+                # Short labels for x-axis so they don't squish; full name in hover
+                sc_labels = [n if len(n) <= 18 else n[:16] + '…' for n in sc_names]
+
+                bar_cols = st.columns(min(len(bar_metrics), 3))
                 for bi, metric in enumerate(bar_metrics[:6]):
                     with bar_cols[bi % 3]:
                         vals = [_aggregate_scenario_metrics(s).get(metric, 0) for s in all_scenarios_data]
                         fig  = go.Figure(go.Bar(
-                            x=sc_names, y=vals,
+                            x=sc_labels, y=vals,
+                            customdata=sc_names,
+                            hovertemplate='<b>%{customdata}</b><br>' + COL_FMT[metric][0] + ': %{text}<extra></extra>',
                             marker_color=sc_colors,
                             text=[COL_FMT[metric][1](v) for v in vals],
                             textposition='outside',
-                            textfont={'size': 9},
+                            textfont={'size': 11},
                         ))
                         fig.update_layout(
-                            title={'text': COL_FMT[metric][0], 'font': {'size': 11}, 'x': 0.5, 'xanchor': 'center'},
-                            margin={'t': 34, 'b': 10, 'l': 10, 'r': 10},
-                            height=190,
+                            title={'text': COL_FMT[metric][0],
+                                   'font': {'size': 14, 'color': '#1e293b'}, 'x': 0.5, 'xanchor': 'center'},
+                            margin={'t': 40, 'b': 60, 'l': 10, 'r': 10},
+                            height=230,
                             paper_bgcolor='rgba(0,0,0,0)',
                             yaxis={'showticklabels': False, 'showgrid': False, 'zeroline': False},
-                            xaxis={'tickfont': {'size': 9}},
+                            xaxis={'tickfont': {'size': 12}, 'tickangle': -20},
                         )
                         st.plotly_chart(fig, use_container_width=True,
                                         config={'displayModeBar': False}, key=f'bar_{metric}')
