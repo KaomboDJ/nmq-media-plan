@@ -918,13 +918,16 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                 col_keys = PHASE_COLS.get((ch, goal), list(_TRAFFIC_COLS))
                 n_ch_cols = len(col_keys) + 1  # +1 for Period
 
-                # Channel sub-header (medium blue)
-                c = ws.cell(row=row, column=1, value=ch)
+                daily_bud = ch_bud / total_days if total_days else 0
+
+                # Channel sub-header (medium blue) — "Channel  |  Daily budget: €X"
+                ch_label = f"{ch}     Daily Budget: €{daily_bud:,.2f} / day"
+                c = ws.cell(row=row, column=1, value=ch_label)
                 c.fill = C_CH; c.font = F_WHITE_B
                 c.alignment = Alignment(horizontal='center', vertical='center')
                 ws.merge_cells(start_row=row, start_column=1,
                                end_row=row, end_column=n_ch_cols)
-                ws.row_dimensions[row].height = 16
+                ws.row_dimensions[row].height = 18
                 row += 1
 
                 # Column header row
