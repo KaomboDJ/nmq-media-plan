@@ -1416,14 +1416,14 @@ def _render_scenario(sid):
                                 placeholder='Scenario name…')
     if new_name and new_name != st.session_state.scenario_names[sid]:
         st.session_state.scenario_names[sid] = new_name
-        st.rerun()
+        st.session_state['_pending_dup_rerun'] = True
     if dup_col.button('⧉ Dup', key=f'dup_{sid}', use_container_width=True, help='Duplicate this scenario'):
         _duplicate_scenario(sid)
     if rem_col.button('✕ Remove', key=f'remove_{sid}', use_container_width=True,
                       disabled=len(st.session_state.scenario_names) <= 1,
                       help='Remove this scenario'):
         st.session_state.scenario_names.pop(sid)
-        st.rerun()
+        st.session_state['_pending_dup_rerun'] = True
 
     # ── Completion status ─────────────────────────────────────────────────────
     _scenario_status(sid)
