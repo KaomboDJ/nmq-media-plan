@@ -737,6 +737,9 @@ _SKIP_KEYS = {
     'dup_', 'remove_', 'tpl_apply_', 'grp_', 'eq_', 'cpm_eff_',
     'pin_', 'dl_gads_', 'dl_excel', 'btn_', 'preset_',
     'save_tpl_', 'del_tpl_',
+    # AI chat state — ephemeral, don't persist across plan loads
+    'bench_chat', 'insights_chat', 'recs_chat',
+    'insights_last', 'recs_last',
 }
 
 def _serialise_state():
@@ -2045,7 +2048,72 @@ Be direct. No headers. No bullet points. Write in plain paragraphs like a strate
                     max_tokens=400,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
-            st.markdown(msg.content[0].text)
+            st.session_state['insights_last'] = msg.content[0].text
+        st.rerun()
+
+    if st.session_state.get('insights_last'):
+        st.markdown(st.session_state['insights_last'])
+
+    st.divider()
+    st.markdown('#### Chat about the plan')
+    st.caption('Ask anything — follow up, dig deeper, change direction. The conversation keeps its memory.')
+
+    if 'insights_chat' not in st.session_state:
+        st.session_state.insights_chat = []
+
+    if st.session_state.insights_chat:
+        if st.button('🗑 Clear conversation', key='insights_clear'):
+            st.session_state.insights_chat = []
+            st.rerun()
+
+    for msg in st.session_state.insights_chat:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+
+    if user_input := st.chat_input(
+        'e.g. What if we cut the Netherlands budget by 20%? Which channel is working hardest?',
+        key='insights_chat_input',
+    ):
+        with st.chat_message('user'):
+            st.markdown(user_input)
+
+        api_key = get_api_key()
+        if not api_key:
+            with st.chat_message('assistant'):
+                st.error('No API key found in .streamlit/secrets.toml')
+        else:
+            summary = build_plan_summary()
+            system_ctx = (
+                f'You are a senior paid media strategist advising a {audience_type} client '
+                f'in the {industry} sector. Here is the full media plan:\n\n{summary}\n\n'
+                f'Answer in 80–150 words. Be direct, reference actual numbers from the plan, '
+                f'frame everything for {audience_type} {industry}. No bullet points.'
+            )
+            api_messages = []
+            for i, m in enumerate(st.session_state.insights_chat):
+                if i == 0 and m['role'] == 'user':
+                    api_messages.append({'role': 'user', 'content': system_ctx + '\n\n---\n\n' + m['content']})
+                else:
+                    api_messages.append(m)
+            first_turn = len(st.session_state.insights_chat) == 0
+            api_messages.append({
+                'role': 'user',
+                'content': (system_ctx + '\n\n---\n\n' + user_input) if first_turn else user_input,
+            })
+            import anthropic as _anthropic
+            client = _anthropic.Anthropic(api_key=api_key)
+            with st.chat_message('assistant'):
+                with st.spinner(''):
+                    resp = client.messages.create(
+                        model='claude-haiku-4-5-20251001',
+                        max_tokens=400,
+                        messages=api_messages,
+                    )
+                reply = resp.content[0].text
+                st.markdown(reply)
+
+            st.session_state.insights_chat.append({'role': 'user',      'content': user_input})
+            st.session_state.insights_chat.append({'role': 'assistant', 'content': reply})
 
 with ai_tab_recs:
     st.caption('Budget allocation recommendations — which markets or channels deserve more weight and why.')
@@ -2087,20 +2155,91 @@ Be direct. No bullet points within sections."""
                     max_tokens=500,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
-            raw = msg.content[0].text
-            # Render each section with a styled header
-            import re as _re
-            sections = _re.split(r'\n(CURRENT ALLOCATION|REBALANCING OPTION|BEST ALLOCATION):\n', raw)
-            if len(sections) > 1:
-                labels = sections[1::2]
-                bodies = sections[2::2]
-                colors = {'CURRENT ALLOCATION': '#437CA3', 'REBALANCING OPTION': '#437CA3', 'BEST ALLOCATION': '#1F6152'}
-                for label, body in zip(labels, bodies):
-                    color = colors.get(label, '#437CA3')
-                    st.markdown(f'<div style="background:{color};color:white;padding:6px 10px;border-radius:4px;font-weight:bold;margin-top:8px">{label}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div style="background:#f2f2f2;padding:10px;border-radius:0 0 4px 4px;margin-bottom:4px">{body.strip()}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(raw)
+            st.session_state['recs_last'] = msg.content[0].text
+        st.rerun()
+
+    if st.session_state.get('recs_last'):
+        raw = st.session_state['recs_last']
+        import re as _re
+        sections = _re.split(r'\n(CURRENT ALLOCATION|REBALANCING OPTION|BEST ALLOCATION):\n', raw)
+        if len(sections) > 1:
+            labels = sections[1::2]
+            bodies = sections[2::2]
+            colors = {'CURRENT ALLOCATION': '#437CA3', 'REBALANCING OPTION': '#437CA3', 'BEST ALLOCATION': '#1F6152'}
+            for label, body in zip(labels, bodies):
+                color = colors.get(label, '#437CA3')
+                st.markdown(f'<div style="background:{color};color:white;padding:6px 10px;border-radius:4px;font-weight:bold;margin-top:8px">{label}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background:#f2f2f2;padding:10px;border-radius:0 0 4px 4px;margin-bottom:4px">{body.strip()}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(raw)
+
+    st.divider()
+    st.markdown('#### Chat about market allocation')
+    st.caption('Ask anything — follow up, dig deeper, change direction. The conversation keeps its memory.')
+
+    if 'recs_chat' not in st.session_state:
+        st.session_state.recs_chat = []
+
+    if st.session_state.recs_chat:
+        if st.button('🗑 Clear conversation', key='recs_clear'):
+            st.session_state.recs_chat = []
+            st.rerun()
+
+    for msg in st.session_state.recs_chat:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+
+    if user_input := st.chat_input(
+        'e.g. Should we shift budget from Germany to France? What if we added LinkedIn to the mix?',
+        key='recs_chat_input',
+    ):
+        with st.chat_message('user'):
+            st.markdown(user_input)
+
+        api_key = get_api_key()
+        if not api_key:
+            with st.chat_message('assistant'):
+                st.error('No API key found in .streamlit/secrets.toml')
+        else:
+            summary = build_plan_summary()
+            mkt_list = '\n'.join(
+                f'- {MARKET_LABELS[m]}: {ai_data["market_pcts"][m]:.1f}% (€{ai_data["market_budgets"][m]:,.0f})'
+                for m in ai_data['selected_markets']
+            ) if ai_data else ''
+            channels_in_use = sorted({ch for chs in (ai_data['goal_channels'].values() if ai_data else []) for ch in chs})
+            system_ctx = (
+                f'You are a senior paid media strategist advising a {audience_type} client '
+                f'in the {industry} sector. Here is the full media plan:\n\n{summary}\n\n'
+                f'Current market split:\n{mkt_list}\n\n'
+                f'Channels in use: {", ".join(channels_in_use) if channels_in_use else "various"}. '
+                f'Answer in 80–150 words. Be direct, reference actual numbers, '
+                f'frame for {audience_type} {industry}. No bullet points.'
+            )
+            api_messages = []
+            for i, m in enumerate(st.session_state.recs_chat):
+                if i == 0 and m['role'] == 'user':
+                    api_messages.append({'role': 'user', 'content': system_ctx + '\n\n---\n\n' + m['content']})
+                else:
+                    api_messages.append(m)
+            first_turn = len(st.session_state.recs_chat) == 0
+            api_messages.append({
+                'role': 'user',
+                'content': (system_ctx + '\n\n---\n\n' + user_input) if first_turn else user_input,
+            })
+            import anthropic as _anthropic
+            client = _anthropic.Anthropic(api_key=api_key)
+            with st.chat_message('assistant'):
+                with st.spinner(''):
+                    resp = client.messages.create(
+                        model='claude-haiku-4-5-20251001',
+                        max_tokens=400,
+                        messages=api_messages,
+                    )
+                reply = resp.content[0].text
+                st.markdown(reply)
+
+            st.session_state.recs_chat.append({'role': 'user',      'content': user_input})
+            st.session_state.recs_chat.append({'role': 'assistant', 'content': reply})
 
 with ai_tab_benchmarks:
     st.caption('Plain-English explanations of the benchmark values used in this plan.')
