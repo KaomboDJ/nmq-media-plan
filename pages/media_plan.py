@@ -409,7 +409,8 @@ def _duplicate_scenario(sid):
     new_sid = len(st.session_state.scenario_names)
     st.session_state.scenario_names.append(st.session_state.scenario_names[sid] + ' (copy)')
     skip_prefixes = ('remove_', 'dup_', 'rename_', 'btn_', 'dl_', 'funnel_', 'grand_',
-                     'preset_', 'eq_', 'cpm_eff_', 'grp_', 'tpl_', 'pacing_', 'bar_')
+                     'preset_', 'eq_', 'cpm_eff_', 'grp_', 'tpl_', 'pacing_', 'bar_',
+                     'save_tpl_', 'del_tpl_', 'pin_', 'mkt_tog_')
     pattern = _re.compile(rf'^(.+)_{sid}$')
     for k, v in list(st.session_state.items()):
         m = pattern.match(str(k))

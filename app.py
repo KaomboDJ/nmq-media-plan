@@ -72,6 +72,7 @@ _LOAD_SKIP = {
     '_pending_load', 'FormSubmitter', '_uploader_v',
     'dup_', 'remove_', 'tpl_apply_', 'grp_', 'eq_', 'cpm_eff_',
     'pin_', 'dl_gads_', 'dl_excel', 'btn_', 'preset_',
+    'save_tpl_', 'del_tpl_', 'mkt_tog_',
 }
 if '_pending_load' in st.session_state:
     _load_data = st.session_state.pop('_pending_load')
