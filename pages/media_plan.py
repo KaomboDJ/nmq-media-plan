@@ -1425,15 +1425,19 @@ def _render_scenario(sid):
         st.markdown('<small style="color:#6b7280;font-weight:600;text-transform:uppercase;'
                     'letter-spacing:0.06em">Save current as template</small>',
                     unsafe_allow_html=True)
-        new_tpl_name = st.text_input('Template name', key=f'tpl_name_{sid}',
+        # Clear the input after a successful save by resetting via a pending flag
+        _tpl_key = f'tpl_name_{sid}'
+        if st.session_state.pop(f'_tpl_name_clear_{sid}', False):
+            st.session_state[_tpl_key] = ''
+
+        new_tpl_name = st.text_input('Template name', key=_tpl_key,
                                      placeholder='e.g. Q3 DACH Full Funnel',
                                      label_visibility='collapsed')
         if st.button('💾 Save template', key=f'save_tpl_{sid}',
                      use_container_width=True, disabled=not new_tpl_name.strip()):
             name = new_tpl_name.strip()
             st.session_state['custom_templates'][name] = _current_as_template(sid)
-            st.session_state[f'tpl_name_{sid}'] = ''
-            st.success(f'"{name}" saved.')
+            st.session_state[f'_tpl_name_clear_{sid}'] = True
             st.rerun()
 
     st.divider()
