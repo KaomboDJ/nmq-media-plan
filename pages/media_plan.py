@@ -54,11 +54,16 @@ MARKET_LABELS = {
 # CPC Search  | CTR Search   | Click→Session | Conv Rate
 
 def _default_bench(cpm_yt, cpm_li, view_rate, ctr_yt, ctr_li, freq,
-                   cpc_s, ctr_s, c2s_yt=0.80, c2s_li=0.82, c2s_s=0.86, cr=0.02):
+                   cpc_s, ctr_s, c2s_yt=0.80, c2s_li=0.82, c2s_s=0.86,
+                   cr=0.02, l2m=0.20, m2s=0.30):
+    shared = {'conv_rate': cr, 'lead_to_mql': l2m, 'mql_to_sql': m2s}
     return {
-        'YouTube':  {'cpm': cpm_yt, 'view_rate': view_rate, 'ctr': ctr_yt,  'frequency': freq, 'click_to_session': c2s_yt, 'conv_rate': cr},
-        'LinkedIn': {'cpm': cpm_li, 'ctr': ctr_li,  'frequency': freq, 'click_to_session': c2s_li, 'conv_rate': cr},
-        'Search':   {'cpc': cpc_s,  'ctr': ctr_s,   'click_to_session': c2s_s, 'conv_rate': cr},
+        'YouTube':  {'cpm': cpm_yt, 'view_rate': view_rate, 'ctr': ctr_yt,
+                     'frequency': freq, 'click_to_session': c2s_yt, **shared},
+        'LinkedIn': {'cpm': cpm_li, 'ctr': ctr_li,
+                     'frequency': freq, 'click_to_session': c2s_li, **shared},
+        'Search':   {'cpc': cpc_s,  'ctr': ctr_s,
+                     'click_to_session': c2s_s, **shared},
     }
 
 BENCH = {
@@ -150,44 +155,62 @@ BENCH_HELP = {
     'view_rate':        'YouTube: % of impressions resulting in a 30-second (or full-video) view.',
     'frequency':        'Average number of times one unique user sees your ad across the campaign.',
     'click_to_session': '% of clicks that result in a tracked site session (accounts for pixel gaps and bounces).',
-    'conv_rate':        '% of sessions that complete your goal action (form fill, purchase, sign-up, etc.).',
+    'conv_rate':        '% of sessions that convert to a lead. Typical B2B range: 1–5%.',
+    'lead_to_mql':      '% of raw leads that qualify as Marketing Qualified Leads. Typical B2B: 15–35%.',
+    'mql_to_sql':       '% of MQLs accepted by sales as Sales Qualified Leads. Typical B2B: 20–40%.',
 }
 
 DONUT_PALETTE = ['#2BB5A5','#1F497D','#4DB896','#437CA3','#5A3E7A','#E8A838','#8B3A3A','#6B7280',
                  '#229990','#2E8A72','#6B9FBF','#7DCFB0']
 
-ADDITIVE = ['Budget', 'impressions', 'reach', 'views', 'clicks', 'sessions', 'conversions']
+ADDITIVE = ['Budget', 'impressions', 'reach', 'views', 'clicks', 'sessions',
+            'conversions', 'mql', 'sql']
 
 COL_FMT = {
-    'Budget':           ('Budget (€)',     lambda x: f'€{x:,.0f}'),
-    'impressions':      ('Impressions',    lambda x: f'{int(round(x)):,}'),
-    'reach':            ('Reach',          lambda x: f'{int(round(x)):,}'),
-    'views':            ('Views',          lambda x: f'{int(round(x)):,}'),
-    'clicks':           ('Clicks',         lambda x: f'{int(round(x)):,}'),
-    'sessions':         ('Sessions',       lambda x: f'{int(round(x)):,}'),
-    'conversions':      ('Conversions',    lambda x: f'{int(round(x)):,}'),
-    'view_rate':        ('View Rate',      lambda x: f'{x*100:.1f}%'),
-    'ctr':              ('CTR',            lambda x: f'{x*100:.2f}%'),
-    'click_to_session': ('Click→Session',  lambda x: f'{x*100:.0f}%'),
-    'cpv':              ('CPV (€)',        lambda x: f'€{x:.2f}'),
-    'cpc':              ('CPC (€)',        lambda x: f'€{x:.2f}'),
-    'cpa':              ('CPA (€)',        lambda x: f'€{x:.2f}'),
-    'cvr':              ('CVR',            lambda x: f'{x*100:.2f}%'),
+    'Budget':           ('Spent (€)',        lambda x: f'€{x:,.0f}'),
+    'impressions':      ('Impressions',      lambda x: f'{int(round(x)):,}'),
+    'eff_cpm':          ('CPM (€)',          lambda x: f'€{x:.2f}'),
+    'reach':            ('Reach',            lambda x: f'{int(round(x)):,}'),
+    'views':            ('Views',            lambda x: f'{int(round(x)):,}'),
+    'clicks':           ('Clicks',           lambda x: f'{int(round(x)):,}'),
+    'cpc':              ('CPC (€)',          lambda x: f'€{x:.2f}'),
+    'ctr':              ('CTR',              lambda x: f'{x*100:.2f}%'),
+    'click_to_session': ('Click→Session %',  lambda x: f'{x*100:.0f}%'),
+    'sessions':         ('Sessions',         lambda x: f'{int(round(x)):,}'),
+    'conv_rate':        ('Session→Lead %',   lambda x: f'{x*100:.2f}%'),
+    'conversions':      ('Leads',            lambda x: f'{int(round(x)):,}'),
+    'cpa':              ('Cost per Lead (€)', lambda x: f'€{x:,.2f}'),
+    'lead_to_mql':      ('Lead→MQL %',       lambda x: f'{x*100:.0f}%'),
+    'mql':              ('MQL',              lambda x: f'{int(round(x)):,}'),
+    'cost_per_mql':     ('CPMQL (€)',        lambda x: f'€{x:,.2f}'),
+    'mql_to_sql':       ('MQL→SQL %',        lambda x: f'{x*100:.0f}%'),
+    'sql':              ('SQL',              lambda x: f'{int(round(x)):,}'),
+    'cost_per_sql':     ('CPSQL (€)',        lambda x: f'€{x:,.2f}'),
+    'view_rate':        ('View Rate',        lambda x: f'{x*100:.1f}%'),
+    'cpv':              ('CPV (€)',          lambda x: f'€{x:.2f}'),
+    'cvr':              ('Click→Lead %',     lambda x: f'{x*100:.2f}%'),
+    'click_to_session_raw': ('Click→Session', lambda x: f'{x*100:.0f}%'),
 }
 
-# Columns shown per (channel, goal), in display order — mirrors the KPI matrix.
-# Awareness → reach/brand metrics first; Consideration → engagement/traffic first;
-# Conversion → cost-efficiency first.
+# Columns shown per (channel, goal), in the exact order the user specified.
+_TRAFFIC_COLS    = ['Budget', 'impressions', 'eff_cpm', 'clicks', 'cpc',
+                    'ctr', 'click_to_session', 'sessions']
+_CONVERSION_COLS = ['Budget', 'impressions', 'eff_cpm', 'clicks', 'cpc',
+                    'ctr', 'click_to_session', 'sessions',
+                    'conv_rate', 'conversions', 'cpa',
+                    'lead_to_mql', 'mql', 'cost_per_mql',
+                    'mql_to_sql', 'sql', 'cost_per_sql']
+
 PHASE_COLS = {
     ('YouTube', 'Awareness'):   ['Budget', 'impressions', 'reach', 'views', 'cpv', 'ctr', 'clicks', 'cpc'],
-    ('YouTube', 'Traffic'):     ['Budget', 'clicks', 'ctr', 'cpc', 'sessions', 'impressions', 'reach'],
-    ('YouTube', 'Conversion'):  ['Budget', 'cpa', 'conversions', 'cvr', 'cpc', 'clicks', 'sessions'],
+    ('YouTube', 'Traffic'):     _TRAFFIC_COLS,
+    ('YouTube', 'Conversion'):  _CONVERSION_COLS,
     ('Search',  'Awareness'):   ['Budget', 'impressions', 'ctr', 'clicks', 'cpc'],
-    ('Search',  'Traffic'):     ['Budget', 'clicks', 'ctr', 'cpc', 'impressions', 'sessions'],
-    ('Search',  'Conversion'):  ['Budget', 'cpa', 'conversions', 'cvr', 'cpc', 'clicks'],
+    ('Search',  'Traffic'):     _TRAFFIC_COLS,
+    ('Search',  'Conversion'):  _CONVERSION_COLS,
     ('LinkedIn','Awareness'):   ['Budget', 'impressions', 'reach', 'ctr', 'clicks', 'cpc'],
-    ('LinkedIn','Traffic'):     ['Budget', 'clicks', 'ctr', 'cpc', 'sessions', 'impressions', 'reach'],
-    ('LinkedIn','Conversion'):  ['Budget', 'cpa', 'conversions', 'cvr', 'cpc', 'clicks', 'sessions'],
+    ('LinkedIn','Traffic'):     _TRAFFIC_COLS,
+    ('LinkedIn','Conversion'):  _CONVERSION_COLS,
 }
 
 
@@ -231,14 +254,26 @@ def calc_row(budget, bm, goal, channel, conv_rate):
             return r
         clicks = budget / cpc
         impressions = clicks / ctr if ctr > 0 else 0
-        r.update({'impressions': impressions, 'clicks': clicks, 'cpc': cpc})
+        r.update({'impressions': impressions, 'clicks': clicks, 'cpc': cpc, 'ctr': ctr})
         if goal in ('Traffic', 'Conversion'):
             r['sessions'] = clicks * c2s
+            r['click_to_session'] = c2s
         if goal == 'Conversion':
             convs = r['sessions'] * conv_rate
             r['conversions'] = convs
-            r['cpa'] = budget / convs if convs > 0 else 0
-            r['cvr'] = convs / clicks if clicks > 0 else 0
+            r['cpa']       = budget / convs if convs > 0 else 0
+            r['cvr']       = convs / clicks if clicks > 0 else 0
+            r['conv_rate'] = conv_rate
+            l2m = bm.get('lead_to_mql', 0.20)
+            m2s = bm.get('mql_to_sql',  0.30)
+            mql = convs * l2m
+            sql = mql * m2s
+            r['lead_to_mql']  = l2m
+            r['mql']          = mql
+            r['cost_per_mql'] = budget / mql if mql > 0 else 0
+            r['mql_to_sql']   = m2s
+            r['sql']          = sql
+            r['cost_per_sql'] = budget / sql if sql > 0 else 0
 
     else:
         cpm = bm.get('cpm', 10.0)
@@ -252,22 +287,39 @@ def calc_row(budget, bm, goal, channel, conv_rate):
         clicks = imp * ctr
         r.update({
             'impressions': imp,
-            'reach': reach,
-            'clicks': clicks,
-            'cpc': budget / clicks if clicks > 0 else 0,
+            'reach':       reach,
+            'clicks':      clicks,
+            'ctr':         ctr,
+            'cpc':         budget / clicks if clicks > 0 else 0,
         })
         if goal == 'Awareness' and channel == 'YouTube':
             vr = bm.get('view_rate', 0.31)
             views = imp * vr
             r['views'] = views
-            r['cpv'] = budget / views if views > 0 else 0
+            r['cpv']   = budget / views if views > 0 else 0
         if goal in ('Traffic', 'Conversion'):
-            r['sessions'] = clicks * c2s
+            r['sessions']         = clicks * c2s
+            r['click_to_session'] = c2s
         if goal == 'Conversion':
             convs = r['sessions'] * conv_rate
             r['conversions'] = convs
-            r['cpa'] = budget / convs if convs > 0 else 0
-            r['cvr'] = convs / clicks if clicks > 0 else 0
+            r['cpa']         = budget / convs if convs > 0 else 0
+            r['cvr']         = convs / clicks if clicks > 0 else 0
+            r['conv_rate']   = conv_rate
+            l2m = bm.get('lead_to_mql', 0.20)
+            m2s = bm.get('mql_to_sql',  0.30)
+            mql = convs * l2m
+            sql = mql * m2s
+            r['lead_to_mql']  = l2m
+            r['mql']          = mql
+            r['cost_per_mql'] = budget / mql if mql > 0 else 0
+            r['mql_to_sql']   = m2s
+            r['sql']          = sql
+            r['cost_per_sql'] = budget / sql if sql > 0 else 0
+
+    # Effective CPM — works for all channels once impressions are known
+    if r.get('impressions', 0) > 0:
+        r['eff_cpm'] = r['Budget'] / r['impressions'] * 1000
 
     return r
 
@@ -509,26 +561,37 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
     fields = []
     if ch == 'Search':
         fields = [
-            ('cpc',   'CPC (€)',    b['cpc'],                                0.10, '%.2f', False),
-            ('ctr',   'CTR %',      b['ctr'] * 100,                          0.5,  '%.1f', True),
+            ('cpc', 'CPC (€)',   b['cpc'],              0.10, '%.2f', False),
+            ('ctr', 'CTR %',     b['ctr'] * 100,        0.05, '%.2f', True),
         ]
         if goal in ('Traffic', 'Conversion'):
-            fields.append(('click_to_session', 'Click→Session %', b.get('click_to_session', 0.85) * 100, 1.0, '%.0f', True))
+            fields.append(('click_to_session', 'Click→Session %',
+                           b.get('click_to_session', 0.85) * 100, 1.0, '%.0f', True))
         if goal == 'Conversion':
-            fields.append(('conv_rate', 'Conv. Rate %', b.get('conv_rate', 0.03) * 100, 0.1, '%.1f', True))
+            fields += [
+                ('conv_rate',   'Session→Lead %', b.get('conv_rate',   0.03) * 100, 0.1, '%.1f', True),
+                ('lead_to_mql', 'Lead→MQL %',     b.get('lead_to_mql', 0.20) * 100, 1.0, '%.0f', True),
+                ('mql_to_sql',  'MQL→SQL %',      b.get('mql_to_sql',  0.30) * 100, 1.0, '%.0f', True),
+            ]
 
     elif ch == 'YouTube':
         fields = [('cpm', 'CPM (€)', b['cpm'], 0.5, '%.2f', False)]
         if goal == 'Awareness':
-            fields.append(('view_rate', 'View Rate %', b.get('view_rate', 0.31) * 100, 0.5, '%.1f', True))
+            fields.append(('view_rate', 'View Rate %',
+                           b.get('view_rate', 0.31) * 100, 0.5, '%.1f', True))
         fields += [
             ('ctr',       'CTR %',     b['ctr'] * 100,          0.01, '%.2f', True),
             ('frequency', 'Frequency', b.get('frequency', 3.0), 0.5,  '%.1f', False),
         ]
         if goal in ('Traffic', 'Conversion'):
-            fields.append(('click_to_session', 'Click→Session %', b.get('click_to_session', 0.80) * 100, 1.0, '%.0f', True))
+            fields.append(('click_to_session', 'Click→Session %',
+                           b.get('click_to_session', 0.80) * 100, 1.0, '%.0f', True))
         if goal == 'Conversion':
-            fields.append(('conv_rate', 'Conv. Rate %', b.get('conv_rate', 0.02) * 100, 0.1, '%.1f', True))
+            fields += [
+                ('conv_rate',   'Session→Lead %', b.get('conv_rate',   0.02) * 100, 0.1, '%.1f', True),
+                ('lead_to_mql', 'Lead→MQL %',     b.get('lead_to_mql', 0.20) * 100, 1.0, '%.0f', True),
+                ('mql_to_sql',  'MQL→SQL %',      b.get('mql_to_sql',  0.30) * 100, 1.0, '%.0f', True),
+            ]
 
     else:  # LinkedIn
         fields = [
@@ -537,9 +600,14 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
             ('frequency', 'Frequency', b.get('frequency', 3.0), 0.5,  '%.1f', False),
         ]
         if goal in ('Traffic', 'Conversion'):
-            fields.append(('click_to_session', 'Click→Session %', b.get('click_to_session', 0.82) * 100, 1.0, '%.0f', True))
+            fields.append(('click_to_session', 'Click→Session %',
+                           b.get('click_to_session', 0.82) * 100, 1.0, '%.0f', True))
         if goal == 'Conversion':
-            fields.append(('conv_rate', 'Conv. Rate %', b.get('conv_rate', 0.02) * 100, 0.1, '%.1f', True))
+            fields += [
+                ('conv_rate',   'Session→Lead %', b.get('conv_rate',   0.02) * 100, 0.1, '%.1f', True),
+                ('lead_to_mql', 'Lead→MQL %',     b.get('lead_to_mql', 0.20) * 100, 1.0, '%.0f', True),
+                ('mql_to_sql',  'MQL→SQL %',      b.get('mql_to_sql',  0.30) * 100, 1.0, '%.0f', True),
+            ]
 
     cols = st.columns(len(fields))
     raw = {}
@@ -561,6 +629,10 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
         bm['click_to_session'] = b.get('click_to_session', 0.80)
     if 'conv_rate' not in bm:
         bm['conv_rate'] = b.get('conv_rate', 0.02)
+    if 'lead_to_mql' not in bm:
+        bm['lead_to_mql'] = b.get('lead_to_mql', 0.20)
+    if 'mql_to_sql' not in bm:
+        bm['mql_to_sql'] = b.get('mql_to_sql', 0.30)
 
     return bm
 
@@ -687,36 +759,35 @@ def _xl_header(ws, row_num):
 def _get_bm_ss(ch, mkt, goal, sid):
     """Read benchmark values from session state (mirrors benchmark_inputs without rendering)."""
     ss = st.session_state
-    b = BENCH[mkt][ch]
+    b  = BENCH[mkt][ch]
+
+    def _pct(key, default):
+        return ss.get(f'{key}_{mkt}_{ch}_{goal}_{sid}', default * 100) / 100
+
     bm = {}
     if ch == 'Search':
-        bm['cpc'] = ss.get(f'cpc_{mkt}_{ch}_{goal}_{sid}', b['cpc'])
-        bm['ctr'] = ss.get(f'ctr_{mkt}_{ch}_{goal}_{sid}', b['ctr'] * 100) / 100
-        bm['click_to_session'] = ss.get(f'click_to_session_{mkt}_{ch}_{goal}_{sid}',
-                                        b.get('click_to_session', 0.85) * 100) / 100
-        bm['conv_rate'] = ss.get(f'conv_rate_{mkt}_{ch}_{goal}_{sid}',
-                                 b.get('conv_rate', 0.03) * 100) / 100
+        bm['cpc']             = ss.get(f'cpc_{mkt}_{ch}_{goal}_{sid}', b['cpc'])
+        bm['ctr']             = _pct('ctr',             b['ctr'])
+        bm['click_to_session']= _pct('click_to_session',b.get('click_to_session', 0.85))
+        bm['conv_rate']       = _pct('conv_rate',       b.get('conv_rate', 0.03))
     elif ch == 'YouTube':
-        bm['cpm'] = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
-        bm['ctr'] = ss.get(f'ctr_{mkt}_{ch}_{goal}_{sid}', b['ctr'] * 100) / 100
-        bm['frequency'] = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
-        if goal == 'Awareness':
-            bm['view_rate'] = ss.get(f'view_rate_{mkt}_{ch}_{goal}_{sid}',
-                                     b.get('view_rate', 0.31) * 100) / 100
-        else:
-            bm['view_rate'] = b.get('view_rate', 0.31)
-        bm['click_to_session'] = ss.get(f'click_to_session_{mkt}_{ch}_{goal}_{sid}',
-                                        b.get('click_to_session', 0.80) * 100) / 100
-        bm['conv_rate'] = ss.get(f'conv_rate_{mkt}_{ch}_{goal}_{sid}',
-                                 b.get('conv_rate', 0.02) * 100) / 100
+        bm['cpm']             = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
+        bm['ctr']             = _pct('ctr',             b['ctr'])
+        bm['frequency']       = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
+        bm['view_rate']       = (_pct('view_rate', b.get('view_rate', 0.31))
+                                 if goal == 'Awareness' else b.get('view_rate', 0.31))
+        bm['click_to_session']= _pct('click_to_session',b.get('click_to_session', 0.80))
+        bm['conv_rate']       = _pct('conv_rate',       b.get('conv_rate', 0.02))
     else:  # LinkedIn
-        bm['cpm'] = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
-        bm['ctr'] = ss.get(f'ctr_{mkt}_{ch}_{goal}_{sid}', b['ctr'] * 100) / 100
-        bm['frequency'] = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
-        bm['click_to_session'] = ss.get(f'click_to_session_{mkt}_{ch}_{goal}_{sid}',
-                                        b.get('click_to_session', 0.82) * 100) / 100
-        bm['conv_rate'] = ss.get(f'conv_rate_{mkt}_{ch}_{goal}_{sid}',
-                                 b.get('conv_rate', 0.02) * 100) / 100
+        bm['cpm']             = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
+        bm['ctr']             = _pct('ctr',             b['ctr'])
+        bm['frequency']       = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
+        bm['click_to_session']= _pct('click_to_session',b.get('click_to_session', 0.82))
+        bm['conv_rate']       = _pct('conv_rate',       b.get('conv_rate', 0.02))
+
+    # MQL/SQL ratios — present for all channels when goal is Conversion
+    bm['lead_to_mql'] = _pct('lead_to_mql', b.get('lead_to_mql', 0.20))
+    bm['mql_to_sql']  = _pct('mql_to_sql',  b.get('mql_to_sql',  0.30))
     return bm
 
 
