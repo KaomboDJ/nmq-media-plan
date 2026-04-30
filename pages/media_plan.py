@@ -169,9 +169,25 @@ COL_FMT = {
     'view_rate':        ('View Rate',      lambda x: f'{x*100:.1f}%'),
     'ctr':              ('CTR',            lambda x: f'{x*100:.2f}%'),
     'click_to_session': ('Click→Session',  lambda x: f'{x*100:.0f}%'),
-    'cpv':              ('CPV (€)',         lambda x: f'€{x:.2f}'),
-    'cpc':              ('CPC (€)',         lambda x: f'€{x:.2f}'),
-    'cpa':              ('CPA (€)',         lambda x: f'€{x:.2f}'),
+    'cpv':              ('CPV (€)',        lambda x: f'€{x:.2f}'),
+    'cpc':              ('CPC (€)',        lambda x: f'€{x:.2f}'),
+    'cpa':              ('CPA (€)',        lambda x: f'€{x:.2f}'),
+    'cvr':              ('CVR',            lambda x: f'{x*100:.2f}%'),
+}
+
+# Columns shown per (channel, goal), in display order — mirrors the KPI matrix.
+# Awareness → reach/brand metrics first; Consideration → engagement/traffic first;
+# Conversion → cost-efficiency first.
+PHASE_COLS = {
+    ('YouTube', 'Awareness'):   ['Budget', 'impressions', 'reach', 'views', 'cpv', 'ctr', 'clicks', 'cpc'],
+    ('YouTube', 'Traffic'):     ['Budget', 'clicks', 'ctr', 'cpc', 'sessions', 'impressions', 'reach'],
+    ('YouTube', 'Conversion'):  ['Budget', 'cpa', 'conversions', 'cvr', 'cpc', 'clicks', 'sessions'],
+    ('Search',  'Awareness'):   ['Budget', 'impressions', 'ctr', 'clicks', 'cpc'],
+    ('Search',  'Traffic'):     ['Budget', 'clicks', 'ctr', 'cpc', 'impressions', 'sessions'],
+    ('Search',  'Conversion'):  ['Budget', 'cpa', 'conversions', 'cvr', 'cpc', 'clicks'],
+    ('LinkedIn','Awareness'):   ['Budget', 'impressions', 'reach', 'ctr', 'clicks', 'cpc'],
+    ('LinkedIn','Traffic'):     ['Budget', 'clicks', 'ctr', 'cpc', 'sessions', 'impressions', 'reach'],
+    ('LinkedIn','Conversion'):  ['Budget', 'cpa', 'conversions', 'cvr', 'cpc', 'clicks', 'sessions'],
 }
 
 
@@ -222,6 +238,7 @@ def calc_row(budget, bm, goal, channel, conv_rate):
             convs = r['sessions'] * conv_rate
             r['conversions'] = convs
             r['cpa'] = budget / convs if convs > 0 else 0
+            r['cvr'] = convs / clicks if clicks > 0 else 0
 
     else:
         cpm = bm.get('cpm', 10.0)
@@ -250,6 +267,7 @@ def calc_row(budget, bm, goal, channel, conv_rate):
             convs = r['sessions'] * conv_rate
             r['conversions'] = convs
             r['cpa'] = budget / convs if convs > 0 else 0
+            r['cvr'] = convs / clicks if clicks > 0 else 0
 
     return r
 
@@ -267,10 +285,13 @@ def build_table(periods, total_budget, bm, goal, channel, conv_rate):
     return pd.concat([df, total_df], ignore_index=True)
 
 
-def fmt_df(df):
+def fmt_df(df, ch=None, goal=None):
     out = df[['Period', 'Days']].copy()
-    for raw, (label, fn) in COL_FMT.items():
-        if raw in df.columns:
+    col_order = PHASE_COLS.get((ch, goal)) if ch and goal else None
+    keys = col_order if col_order else list(COL_FMT.keys())
+    for raw in keys:
+        if raw in COL_FMT and raw in df.columns:
+            label, fn = COL_FMT[raw]
             out[label] = df[raw].apply(fn)
     return out
 
@@ -583,7 +604,7 @@ def render_goal_section(mkt, goal, selected_channels, ch_budgets, periods, grand
         col_t, col_f = st.columns([3, 2])
         with col_t:
             st.markdown(f'**{ch}** — €{ch_bud:,.0f}')
-            st.dataframe(fmt_df(df), use_container_width=True, hide_index=True)
+            st.dataframe(fmt_df(df, ch, goal), use_container_width=True, hide_index=True)
         with col_f:
             st.plotly_chart(
                 make_funnel(df, goal, ch, f'{mkt} — {ch}'),
@@ -813,6 +834,7 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                 'cpc_cpm':     cpc_cpm,
                 'ctr':         clk / imp if imp > 0 else 0,
                 'conv_rate':   conv / ses if ses > 0 else 0,
+                'cvr':         conv / clk if clk > 0 else 0,
                 'cpl':         bud / conv if conv > 0 else 0,
             }
 
