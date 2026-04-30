@@ -809,19 +809,21 @@ def _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid):
 def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end_date, breakdown='Weekly'):
     """
     One workbook. One tab per country.
-    Layout: goal sections stacked vertically → channel subsection → flat period table.
-    Columns are phase-appropriate (PHASE_COLS).
+    Layout: goal sections → channel subsection → editable assumptions block → period table.
+    Budget is the only raw input per period; all other columns are Excel formulas.
     """
     from openpyxl.utils import get_column_letter
 
     # ── Colour palette ────────────────────────────────────────────────────────
-    C_TITLE  = PatternFill('solid', fgColor='1F3864')  # dark navy — title
-    C_GOAL   = PatternFill('solid', fgColor='1F3864')  # dark navy — goal section header
-    C_CH     = PatternFill('solid', fgColor='2E75B6')  # medium blue — channel header
-    C_HDR    = PatternFill('solid', fgColor='4472C4')  # blue — column header row
-    C_TOTAL  = PatternFill('solid', fgColor='CFE1F3')  # light blue — TOTAL row
-    C_ODD    = PatternFill('solid', fgColor='FFFFFF')  # white — odd data rows
-    C_EVEN   = PatternFill('solid', fgColor='EEF3FB')  # very light blue — even data rows
+    C_TITLE  = PatternFill('solid', fgColor='1F3864')
+    C_GOAL   = PatternFill('solid', fgColor='1F3864')
+    C_CH     = PatternFill('solid', fgColor='2E75B6')
+    C_ASSM_H = PatternFill('solid', fgColor='E2EFDA')  # light green — assumptions label row
+    C_ASSM_V = PatternFill('solid', fgColor='FFFDE7')  # light yellow — editable values
+    C_HDR    = PatternFill('solid', fgColor='4472C4')
+    C_TOTAL  = PatternFill('solid', fgColor='CFE1F3')
+    C_ODD    = PatternFill('solid', fgColor='FFFFFF')
+    C_EVEN   = PatternFill('solid', fgColor='EEF3FB')
 
     F_WHITE_B = Font(color='FFFFFF', bold=True)
     F_BOLD    = Font(bold=True)
@@ -829,18 +831,137 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
     AC = Alignment(horizontal='center', vertical='center', wrap_text=True)
     AL = Alignment(horizontal='left',   vertical='center')
 
-    # Number format per column key
     _PCT_KEYS = {'ctr', 'view_rate', 'click_to_session', 'conv_rate',
                  'lead_to_mql', 'mql_to_sql', 'cvr'}
     _EUR_KEYS = {'Budget', 'cpc', 'cpa', 'cpv', 'eff_cpm',
                  'cost_per_mql', 'cost_per_sql'}
+    _ADDITIVE = {'Budget', 'impressions', 'reach', 'views', 'clicks',
+                 'sessions', 'conversions', 'mql', 'sql'}
 
     def _num_fmt(key):
         if key in _PCT_KEYS: return '0.00%'
         if key in _EUR_KEYS: return '#,##0.00'
         return '#,##0'
 
-    # ── Tab grouping: one per (market × scenario if market appears in 2+) ────
+    # ── Benchmark params per (channel, goal) — shown in the assumptions block ─
+    _BM_PARAMS = {
+        ('YouTube',  'Awareness'):   ['cpm', 'view_rate', 'ctr', 'frequency'],
+        ('YouTube',  'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
+        ('YouTube',  'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('LinkedIn', 'Awareness'):   ['cpm', 'ctr', 'frequency'],
+        ('LinkedIn', 'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
+        ('LinkedIn', 'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('Search',   'Awareness'):   ['cpc', 'ctr'],
+        ('Search',   'Traffic'):     ['cpc', 'ctr', 'click_to_session'],
+        ('Search',   'Conversion'):  ['cpc', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+    }
+    _BM_LABELS = {
+        'cpm': 'CPM (€)', 'cpc': 'CPC (€)', 'view_rate': 'View Rate',
+        'ctr': 'CTR', 'frequency': 'Frequency', 'click_to_session': 'Click→Session',
+        'conv_rate': 'Session→Lead %', 'lead_to_mql': 'Lead→MQL %', 'mql_to_sql': 'MQL→SQL %',
+    }
+    _BM_NUM_FMT = {
+        'cpm': '#,##0.00', 'cpc': '#,##0.00', 'view_rate': '0.00%',
+        'ctr': '0.00%', 'frequency': '0.0', 'click_to_session': '0%',
+        'conv_rate': '0.00%', 'lead_to_mql': '0%', 'mql_to_sql': '0%',
+    }
+
+    def _formula(key, r, col_map, bm_map, ch):
+        """Return Excel formula string for a derived column at row r, or None for raw inputs."""
+        L = col_map
+
+        def ref(k):   # same-row cell ref
+            return f"{L.get(k, 'A')}{r}"
+
+        def bm(k):    # absolute assumption cell ref
+            return bm_map.get(k, '0')
+
+        def ie(f):
+            return f'=IFERROR({f},"")'
+
+        if key == 'Budget':
+            return None
+
+        if key == 'impressions':
+            if ch == 'Search':
+                return ie(f"{ref('clicks')}/{bm('ctr')}")
+            return ie(f"{ref('Budget')}/{bm('cpm')}*1000")
+
+        if key == 'reach':
+            return ie(f"{ref('impressions')}/{bm('frequency')}")
+
+        if key == 'views':
+            return ie(f"{ref('impressions')}*{bm('view_rate')}")
+
+        if key == 'clicks':
+            if ch == 'Search':
+                return ie(f"{ref('Budget')}/{bm('cpc')}")
+            return ie(f"{ref('impressions')}*{bm('ctr')}")
+
+        if key == 'ctr':
+            return ie(f"{ref('clicks')}/{ref('impressions')}")
+
+        if key == 'cpc':
+            return ie(f"{ref('Budget')}/{ref('clicks')}")
+
+        if key == 'cpv':
+            return ie(f"{ref('Budget')}/{ref('views')}")
+
+        if key == 'eff_cpm':
+            return ie(f"{ref('Budget')}/{ref('impressions')}*1000")
+
+        if key == 'click_to_session':
+            return f"={bm('click_to_session')}"
+
+        if key == 'sessions':
+            return ie(f"{ref('clicks')}*{bm('click_to_session')}")
+
+        if key == 'conv_rate':
+            return f"={bm('conv_rate')}"
+
+        if key == 'conversions':
+            return ie(f"{ref('sessions')}*{bm('conv_rate')}")
+
+        if key == 'cpa':
+            return ie(f"{ref('Budget')}/{ref('conversions')}")
+
+        if key == 'lead_to_mql':
+            return f"={bm('lead_to_mql')}"
+
+        if key == 'mql':
+            return ie(f"{ref('conversions')}*{bm('lead_to_mql')}")
+
+        if key == 'cost_per_mql':
+            return ie(f"{ref('Budget')}/{ref('mql')}")
+
+        if key == 'mql_to_sql':
+            return f"={bm('mql_to_sql')}"
+
+        if key == 'sql':
+            return ie(f"{ref('mql')}*{bm('mql_to_sql')}")
+
+        if key == 'cost_per_sql':
+            return ie(f"{ref('Budget')}/{ref('sql')}")
+
+        return None
+
+    def _total_formula(key, r, col_map, bm_map, first_r, last_r, ch):
+        """TOTAL row: SUM for additive cols, derived formula for costs/rates."""
+        L = col_map
+
+        def sumf(k):
+            return f"=SUM({L.get(k,'A')}{first_r}:{L.get(k,'A')}{last_r})"
+
+        if key in _ADDITIVE:
+            return sumf(key)
+
+        # rate columns just reference the benchmark (same across all periods)
+        if key in ('click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'):
+            return f"={bm_map.get(key, '0')}"
+
+        return _formula(key, r, col_map, bm_map, ch)
+
+    # ── Tab grouping ──────────────────────────────────────────────────────────
     market_count = {}
     for s in all_scenarios:
         for mkt in s['selected_markets']:
@@ -858,20 +979,19 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    periods     = generate_periods(start_date, end_date, breakdown)
-    total_days  = sum(p['days'] for p in periods) or 1
+    periods    = generate_periods(start_date, end_date, breakdown)
+    total_days = sum(p['days'] for p in periods) or 1
 
     for tab_name, s, sid, mkt in tabs:
         ws = wb.create_sheet(title=tab_name)
         mkt_label  = MARKET_LABELS.get(mkt, mkt)
         mkt_budget = s['market_budgets'][mkt]
 
-        # Work out the widest column count needed for merging titles
         max_data_cols = max(
             (len(PHASE_COLS.get((ch, goal), [])) for goal, chs in s['goal_channels'].items()
              for ch in chs), default=8
         )
-        n_cols_total = 1 + max_data_cols  # period label + data cols
+        n_cols_total = 1 + max_data_cols
 
         # ── Title rows ───────────────────────────────────────────────────────
         row = 1
@@ -888,7 +1008,7 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                            end_row=row, end_column=n_cols_total)
             ws.row_dimensions[row].height = ht
             row += 1
-        row += 1  # blank after titles
+        row += 1
 
         # ── Goal sections ─────────────────────────────────────────────────────
         for goal in ['Awareness', 'Traffic', 'Conversion']:
@@ -897,7 +1017,6 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
             goal_chs   = s['goal_channels'][goal]
             ch_budgets = _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid)
 
-            # Goal header (dark navy, merged)
             c = ws.cell(row=row, column=1, value=goal.upper())
             c.fill = C_GOAL; c.font = F_WHITE_B
             c.alignment = Alignment(horizontal='center', vertical='center')
@@ -907,20 +1026,14 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
             row += 1
 
             for ch in goal_chs:
-                ch_bud    = ch_budgets.get(ch, 0)
-                bm        = _get_bm_ss(ch, mkt, goal, sid)
-                conv_rate = bm.get('conv_rate', 0.02)
-
-                df        = build_table(periods, ch_bud, bm, goal, ch, conv_rate)
-                data_rows = df[df['Period'] != 'TOTAL']
-                total_row = df[df['Period'] == 'TOTAL'].iloc[0]
-
+                ch_bud   = ch_budgets.get(ch, 0)
+                bm_data  = _get_bm_ss(ch, mkt, goal, sid)
                 col_keys = PHASE_COLS.get((ch, goal), list(_TRAFFIC_COLS))
-                n_ch_cols = len(col_keys) + 1  # +1 for Period
-
+                n_ch_cols = len(col_keys) + 1
+                col_map   = {key: get_column_letter(2 + i) for i, key in enumerate(col_keys)}
                 daily_bud = ch_bud / total_days if total_days else 0
 
-                # Channel sub-header (medium blue) — "Channel  |  Daily budget: €X"
+                # Channel sub-header
                 ch_label = f"{ch}     Daily Budget: €{daily_bud:,.2f} / day"
                 c = ws.cell(row=row, column=1, value=ch_label)
                 c.fill = C_CH; c.font = F_WHITE_B
@@ -930,7 +1043,43 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                 ws.row_dimensions[row].height = 18
                 row += 1
 
-                # Column header row
+                # ── Assumptions block ─────────────────────────────────────────
+                bm_params = _BM_PARAMS.get((ch, goal), [])
+
+                # Banner
+                c = ws.cell(row=row, column=1,
+                            value='ASSUMPTIONS  —  edit the yellow cells to recalculate the whole table')
+                c.fill = C_ASSM_H
+                c.font = Font(italic=True, size=9, color='375623')
+                c.alignment = AL
+                ws.merge_cells(start_row=row, start_column=1,
+                               end_row=row, end_column=n_ch_cols)
+                ws.row_dimensions[row].height = 14
+                row += 1
+
+                # Assumption labels
+                bm_col_map = {p: get_column_letter(2 + i) for i, p in enumerate(bm_params)}
+                for i, param in enumerate(bm_params):
+                    c = ws.cell(row=row, column=2 + i, value=_BM_LABELS.get(param, param))
+                    c.fill = C_ASSM_H
+                    c.font = Font(bold=True, size=9, color='375623')
+                    c.alignment = AC
+                ws.row_dimensions[row].height = 14
+                row += 1
+
+                # Assumption values (editable)
+                bm_val_row = row
+                bm_map = {p: f'${bm_col_map[p]}${bm_val_row}' for p in bm_params}
+                for i, param in enumerate(bm_params):
+                    c = ws.cell(row=row, column=2 + i, value=bm_data.get(param, 0))
+                    c.fill = C_ASSM_V
+                    c.font = Font(bold=True, size=10)
+                    c.alignment = AC
+                    c.number_format = _BM_NUM_FMT.get(param, 'General')
+                ws.row_dimensions[row].height = 18
+                row += 2  # values row + blank spacer
+
+                # ── Column headers ────────────────────────────────────────────
                 c = ws.cell(row=row, column=1, value='PERIOD')
                 c.fill = C_HDR; c.font = F_WHITE_B; c.alignment = AC
                 for ci, key in enumerate(col_keys, 2):
@@ -940,30 +1089,37 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                 ws.row_dimensions[row].height = 28
                 row += 1
 
-                # Period data rows
-                for r_idx, (_, dr) in enumerate(data_rows.iterrows()):
+                # ── Period data rows (Budget = raw value, rest = formulas) ────
+                first_data_row = row
+                for r_idx, p in enumerate(periods):
+                    bud  = ch_bud * p['days'] / total_days if total_days else 0
                     fill = C_ODD if r_idx % 2 == 0 else C_EVEN
-                    c = ws.cell(row=row, column=1, value=str(dr['Period']))
+                    c = ws.cell(row=row, column=1, value=str(p['label']))
                     c.fill = fill; c.font = F_BOLD; c.alignment = AC
                     for ci, key in enumerate(col_keys, 2):
-                        val = float(dr[key]) if key in dr.index and dr[key] == dr[key] else 0.0
-                        c = ws.cell(row=row, column=ci, value=val)
+                        if key == 'Budget':
+                            c = ws.cell(row=row, column=ci, value=bud)
+                        else:
+                            f = _formula(key, row, col_map, bm_map, ch)
+                            c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
                         c.fill = fill; c.font = F_NORMAL; c.alignment = AC
                         c.number_format = _num_fmt(key)
                     row += 1
+                last_data_row = row - 1
 
-                # TOTAL row
+                # ── TOTAL row ─────────────────────────────────────────────────
                 c = ws.cell(row=row, column=1, value='TOTAL')
                 c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
                 for ci, key in enumerate(col_keys, 2):
-                    val = float(total_row[key]) if key in total_row.index and total_row[key] == total_row[key] else 0.0
-                    c = ws.cell(row=row, column=ci, value=val)
+                    f = _total_formula(key, row, col_map, bm_map,
+                                       first_data_row, last_data_row, ch)
+                    c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
                     c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
                     c.number_format = _num_fmt(key)
                 ws.row_dimensions[row].height = 15
-                row += 2  # TOTAL + blank
+                row += 2
 
-            row += 1  # extra blank between goal sections
+            row += 1
 
         # ── Column widths ─────────────────────────────────────────────────────
         ws.column_dimensions['A'].width = 18
