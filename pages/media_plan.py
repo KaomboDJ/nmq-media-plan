@@ -1622,20 +1622,34 @@ def _render_scenario(sid):
     for mkt in s_markets:
         mkt_budget = s_market_budgets[mkt]
         is_pinned  = (st.session_state.get(f'pinned_country_{sid}') == mkt)
-        pin_label  = f'  📌' if is_pinned else ''
         mkt_label  = MARKET_LABELS[mkt]
 
-        with st.expander(f'{mkt_label}{pin_label}', expanded=True):
-            # Pin toggle inside the expander
-            pin_icon = 'Unpin' if is_pinned else '📌 Pin to top'
-            pin_tip  = 'Unpin this country' if is_pinned else 'Pin to top for comparison while scrolling'
-            if st.button(pin_icon, key=f'pin_{mkt}_{sid}', help=pin_tip):
-                if is_pinned:
-                    st.session_state.pop(f'pinned_country_{sid}', None)
-                else:
-                    st.session_state[f'pinned_country_{sid}'] = mkt
-                st.rerun()
+        # Expanded state stored in session state so reruns (pin/unpin) don't reset it
+        exp_key = f'mkt_exp_{mkt}_{sid}'
+        if exp_key not in st.session_state:
+            st.session_state[exp_key] = True
+        is_expanded = st.session_state[exp_key]
 
+        # Country header row: toggle + name + pin indicator
+        h_col, tog_col, pin_col = st.columns([10, 1, 1])
+        pin_suffix = '  📌' if is_pinned else ''
+        h_col.subheader(f'{mkt_label}{pin_suffix}')
+        tog_icon = '▼' if is_expanded else '▶'
+        if tog_col.button(tog_icon, key=f'mkt_tog_{mkt}_{sid}', use_container_width=True,
+                          help='Collapse' if is_expanded else 'Expand'):
+            st.session_state[exp_key] = not is_expanded
+            st.rerun()
+        pin_icon = '✕ Unpin' if is_pinned else '📌 Pin'
+        pin_tip  = 'Unpin this country' if is_pinned else 'Pin to top for comparison while scrolling'
+        if pin_col.button(pin_icon, key=f'pin_{mkt}_{sid}',
+                          use_container_width=True, help=pin_tip):
+            if is_pinned:
+                st.session_state.pop(f'pinned_country_{sid}', None)
+            else:
+                st.session_state[f'pinned_country_{sid}'] = mkt
+            st.rerun()
+
+        if is_expanded:
             if len(selected_goals) > 1:
                 goal_tabs = st.tabs(selected_goals)
                 for tab, goal in zip(goal_tabs, selected_goals):
@@ -1665,6 +1679,8 @@ def _render_scenario(sid):
                             if parts:
                                 kpi_cache[f'{g} · {ch}'] = ' | '.join(parts[:3])
                 st.session_state[f'cached_kpis_{pinned_mkt}_{sid}'] = kpi_cache
+
+        st.divider()
 
     st.subheader('Grand Total — All Markets')
     for goal in selected_goals:
