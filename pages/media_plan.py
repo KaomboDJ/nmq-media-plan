@@ -356,20 +356,43 @@ def _duplicate_scenario(sid):
     st.rerun()
 
 
-def _apply_template(sid, tpl_name):
-    tpl = PLAN_TEMPLATES[tpl_name]
-    n = len(tpl['markets'])
+def _apply_template_data(sid, tpl):
+    """Apply a template dict to a scenario slot."""
+    n = max(len(tpl['markets']), 1)
     st.session_state[f'selected_markets_{sid}'] = tpl['markets']
-    st.session_state[f'total_budget_{sid}'] = tpl['budget']
+    st.session_state[f'total_budget_{sid}']     = tpl['budget']
     default_pct = round(100.0 / n, 1)
     for mkt in tpl['markets']:
         st.session_state[f'pct_{mkt}_{sid}'] = default_pct
     for goal in ALL_GOALS:
         goal_on = goal in tpl['goals']
         st.session_state[f'sb_goal_{goal}_{sid}'] = goal_on
-        for ch, key in [('YouTube','sb_yt'), ('Search','sb_s'), ('LinkedIn','sb_li')]:
+        for ch, key in [('YouTube', 'sb_yt'), ('Search', 'sb_s'), ('LinkedIn', 'sb_li')]:
             st.session_state[f'{key}_{goal}_{sid}'] = goal_on and ch in tpl['goals'].get(goal, [])
     st.rerun()
+
+
+def _apply_template(sid, tpl_name):
+    _apply_template_data(sid, PLAN_TEMPLATES[tpl_name])
+
+
+def _current_as_template(sid):
+    """Snapshot the current scenario config as a saveable template dict."""
+    ss = st.session_state
+    goals = {}
+    for goal in ALL_GOALS:
+        if ss.get(f'sb_goal_{goal}_{sid}', False):
+            chs = []
+            if ss.get(f'sb_yt_{goal}_{sid}', False): chs.append('YouTube')
+            if ss.get(f'sb_s_{goal}_{sid}',  False): chs.append('Search')
+            if ss.get(f'sb_li_{goal}_{sid}', False): chs.append('LinkedIn')
+            if chs:
+                goals[goal] = chs
+    return {
+        'markets': ss.get(f'selected_markets_{sid}', []),
+        'budget':  ss.get(f'total_budget_{sid}', 0),
+        'goals':   goals,
+    }
 
 
 def _apply_bench_preset(ch, mkt, goal, sid, preset_name):
@@ -625,13 +648,19 @@ _SKIP_KEYS = {
     # button / download widget keys — never safe to restore
     'dup_', 'remove_', 'tpl_apply_', 'grp_', 'eq_', 'cpm_eff_',
     'pin_', 'dl_gads_', 'dl_excel', 'btn_', 'preset_',
+    'save_tpl_', 'del_tpl_',
 }
 
 def _serialise_state():
     data = {'scenario_names': st.session_state.get('scenario_names', ['Scenario 1'])}
+    # custom_templates is a dict of dicts — handle it explicitly
+    if 'custom_templates' in st.session_state:
+        data['custom_templates'] = st.session_state['custom_templates']
     for k, v in st.session_state.items():
         if any(k.startswith(s) for s in _SKIP_KEYS):
             continue
+        if k == 'custom_templates':
+            continue  # already handled above
         if isinstance(v, date):
             data[k] = {'__date__': v.isoformat()}
         elif isinstance(v, (str, int, float, bool, list)):
@@ -1179,6 +1208,8 @@ st.divider()
 # Scenario management via session state
 if 'scenario_names' not in st.session_state:
     st.session_state.scenario_names = ['Scenario 1']
+if 'custom_templates' not in st.session_state:
+    st.session_state['custom_templates'] = {}
 
 add_col, _ = st.columns([1, 6])
 if add_col.button('＋ Add Scenario'):
@@ -1217,13 +1248,65 @@ def _render_scenario(sid):
     # ── Completion status ─────────────────────────────────────────────────────
     _scenario_status(sid)
 
-    # ── Template picker ───────────────────────────────────────────────────────
-    with st.expander('Load a template', expanded=False):
+    # ── Templates ─────────────────────────────────────────────────────────────
+    with st.expander('📁 Templates', expanded=False):
+        custom_tpls = st.session_state.get('custom_templates', {})
+
+        # ── Built-in ──────────────────────────────────────────────────────────
+        st.markdown('<small style="color:#6b7280;font-weight:600;text-transform:uppercase;'
+                    'letter-spacing:0.06em">Built-in</small>', unsafe_allow_html=True)
         tpl_options = ['— pick a template —'] + list(PLAN_TEMPLATES.keys())
-        tpl_sel = st.selectbox('Template', tpl_options, key=f'tpl_{sid}', label_visibility='collapsed')
+        tpl_sel = st.selectbox('Template', tpl_options, key=f'tpl_{sid}',
+                               label_visibility='collapsed')
         if tpl_sel != '— pick a template —':
             if st.button(f'Apply "{tpl_sel}"', key=f'tpl_apply_{sid}'):
                 _apply_template(sid, tpl_sel)
+
+        st.divider()
+
+        # ── Your saved templates ──────────────────────────────────────────────
+        st.markdown('<small style="color:#6b7280;font-weight:600;text-transform:uppercase;'
+                    'letter-spacing:0.06em">Your saved templates</small>', unsafe_allow_html=True)
+        if custom_tpls:
+            for tpl_name, tpl_data in list(custom_tpls.items()):
+                goals_summary = '  ·  '.join(
+                    f"{g}: {', '.join(chs)}" for g, chs in tpl_data.get('goals', {}).items()
+                )
+                mkts = ', '.join(MARKET_LABELS.get(m, m) for m in tpl_data.get('markets', []))
+                st.markdown(
+                    f'<div style="font-size:0.82rem;font-weight:600;margin-bottom:2px">{tpl_name}</div>'
+                    f'<div style="font-size:0.75rem;color:#6b7280;margin-bottom:6px">'
+                    f'€{tpl_data.get("budget", 0):,.0f} · {mkts}<br>{goals_summary}</div>',
+                    unsafe_allow_html=True,
+                )
+                ca, cb = st.columns([3, 1])
+                safe = tpl_name.replace(' ', '_')[:24]
+                if ca.button(f'Apply', key=f'tpl_apply_custom_{safe}_{sid}',
+                             use_container_width=True):
+                    _apply_template_data(sid, tpl_data)
+                if cb.button('✕ Delete', key=f'del_tpl_{safe}_{sid}',
+                             use_container_width=True):
+                    del st.session_state['custom_templates'][tpl_name]
+                    st.rerun()
+        else:
+            st.caption('No saved templates yet.')
+
+        st.divider()
+
+        # ── Save current as template ──────────────────────────────────────────
+        st.markdown('<small style="color:#6b7280;font-weight:600;text-transform:uppercase;'
+                    'letter-spacing:0.06em">Save current as template</small>',
+                    unsafe_allow_html=True)
+        new_tpl_name = st.text_input('Template name', key=f'tpl_name_{sid}',
+                                     placeholder='e.g. Q3 DACH Full Funnel',
+                                     label_visibility='collapsed')
+        if st.button('💾 Save template', key=f'save_tpl_{sid}',
+                     use_container_width=True, disabled=not new_tpl_name.strip()):
+            name = new_tpl_name.strip()
+            st.session_state['custom_templates'][name] = _current_as_template(sid)
+            st.session_state[f'tpl_name_{sid}'] = ''
+            st.success(f'"{name}" saved.')
+            st.rerun()
 
     st.divider()
 
