@@ -1827,101 +1827,113 @@ if compare_tab is not None:
         if len(all_scenarios_data) < 2:
             st.info('Fill in at least two scenarios (markets, goals, channels, and budgets) to run a comparison.')
         else:
-            # ── KPI summary table (always visible, no button needed) ──────────
-            st.markdown('#### KPI Summary')
-            metric_labels = {col: COL_FMT[col][0] for col in ADDITIVE if col in COL_FMT}
-            summary_rows = []
-            for s in all_scenarios_data:
-                agg = _aggregate_scenario_metrics(s)
-                row = {'Scenario': s['name'], 'Budget (€)': f"€{agg['Budget']:,.0f}"}
-                for col in ADDITIVE:
-                    if col == 'Budget':
-                        continue
-                    if agg.get(col, 0) > 0:
-                        row[metric_labels[col]] = COL_FMT[col][1](agg[col])
-                summary_rows.append(row)
-            st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+            # ── Scenario selector ─────────────────────────────────────────────
+            all_names = [s['name'] for s in all_scenarios_data]
+            selected_names = st.multiselect(
+                'Scenarios to compare',
+                options=all_names,
+                default=all_names,
+                key='compare_selected',
+            )
+            compare_data = [s for s in all_scenarios_data if s['name'] in selected_names]
 
-            # ── Winner callouts per metric ────────────────────────────────────
-            st.markdown('#### Which scenario leads on each KPI?')
-            active_cols = [c for c in ADDITIVE if c != 'Budget'
-                           and any(_aggregate_scenario_metrics(s).get(c, 0) > 0 for s in all_scenarios_data)]
-            winner_cols = st.columns(max(len(active_cols), 1))
-            for col_idx, col in enumerate(active_cols):
-                vals = [(s['name'], _aggregate_scenario_metrics(s).get(col, 0)) for s in all_scenarios_data]
-                best = max(vals, key=lambda x: x[1])
-                winner_cols[col_idx].markdown(
-                    f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;'
-                    f'text-align:center;background:#f8fafc;">'
-                    f'<div style="font-size:0.70rem;color:#64748b;font-weight:600;'
-                    f'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">'
-                    f'{metric_labels[col]}</div>'
-                    f'<div style="font-size:0.82rem;font-weight:700;color:#1e293b;'
-                    f'line-height:1.3;word-break:break-word">{best[0]}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+            if len(compare_data) < 2:
+                st.info('Select at least two scenarios to compare.')
+            else:
+                metric_labels = {col: COL_FMT[col][0] for col in ADDITIVE if col in COL_FMT}
 
-            # ── Visual comparison bar charts ──────────────────────────────────
-            st.markdown('#### Visual comparison')
-            bar_metrics = [c for c in ['impressions','reach','clicks','sessions','conversions']
-                           if any(_aggregate_scenario_metrics(s).get(c, 0) > 0 for s in all_scenarios_data)]
-            if bar_metrics:
-                sc_names  = [s['name'] for s in all_scenarios_data]
-                sc_colors = DONUT_PALETTE[:len(all_scenarios_data)]
-                # Short labels for x-axis so they don't squish; full name in hover
-                sc_labels = [n if len(n) <= 18 else n[:16] + '…' for n in sc_names]
+                # ── KPI summary table ─────────────────────────────────────────
+                st.markdown('#### KPI Summary')
+                summary_rows = []
+                for s in compare_data:
+                    agg = _aggregate_scenario_metrics(s)
+                    row = {'Scenario': s['name'], 'Budget (€)': f"€{agg['Budget']:,.0f}"}
+                    for col in ADDITIVE:
+                        if col == 'Budget':
+                            continue
+                        if agg.get(col, 0) > 0:
+                            row[metric_labels[col]] = COL_FMT[col][1](agg[col])
+                    summary_rows.append(row)
+                st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
-                bar_cols = st.columns(min(len(bar_metrics), 3))
-                for bi, metric in enumerate(bar_metrics[:6]):
-                    with bar_cols[bi % 3]:
-                        vals = [_aggregate_scenario_metrics(s).get(metric, 0) for s in all_scenarios_data]
-                        fig  = go.Figure(go.Bar(
-                            x=sc_labels, y=vals,
-                            customdata=sc_names,
-                            hovertemplate='<b>%{customdata}</b><br>' + COL_FMT[metric][0] + ': %{text}<extra></extra>',
-                            marker_color=sc_colors,
-                            text=[COL_FMT[metric][1](v) for v in vals],
-                            textposition='outside',
-                            textfont={'size': 11},
-                        ))
-                        fig.update_layout(
-                            title={'text': COL_FMT[metric][0],
-                                   'font': {'size': 14, 'color': '#1e293b'}, 'x': 0.5, 'xanchor': 'center'},
-                            margin={'t': 40, 'b': 60, 'l': 10, 'r': 10},
-                            height=230,
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            yaxis={'showticklabels': False, 'showgrid': False, 'zeroline': False},
-                            xaxis={'tickfont': {'size': 12}, 'tickangle': -20},
-                        )
-                        st.plotly_chart(fig, use_container_width=True,
-                                        config={'displayModeBar': False}, key=f'bar_{metric}')
+                # ── Winner callouts per metric ────────────────────────────────
+                st.markdown('#### Which scenario leads on each KPI?')
+                active_cols = [c for c in ADDITIVE if c != 'Budget'
+                               and any(_aggregate_scenario_metrics(s).get(c, 0) > 0 for s in compare_data)]
+                winner_cols = st.columns(max(len(active_cols), 1))
+                for col_idx, col in enumerate(active_cols):
+                    vals = [(s['name'], _aggregate_scenario_metrics(s).get(col, 0)) for s in compare_data]
+                    best = max(vals, key=lambda x: x[1])
+                    winner_cols[col_idx].markdown(
+                        f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;'
+                        f'text-align:center;background:#f8fafc;">'
+                        f'<div style="font-size:0.70rem;color:#64748b;font-weight:600;'
+                        f'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">'
+                        f'{metric_labels[col]}</div>'
+                        f'<div style="font-size:0.82rem;font-weight:700;color:#1e293b;'
+                        f'line-height:1.3;word-break:break-word">{best[0]}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
-            st.divider()
+                # ── Visual comparison bar charts ──────────────────────────────
+                st.markdown('#### Visual comparison')
+                bar_metrics = [c for c in ['impressions', 'reach', 'clicks', 'sessions', 'conversions']
+                               if any(_aggregate_scenario_metrics(s).get(c, 0) > 0 for s in compare_data)]
+                if bar_metrics:
+                    sc_names  = [s['name'] for s in compare_data]
+                    sc_colors = DONUT_PALETTE[:len(compare_data)]
+                    sc_labels = [n if len(n) <= 18 else n[:16] + '…' for n in sc_names]
+                    bar_cols  = st.columns(min(len(bar_metrics), 3))
+                    for bi, metric in enumerate(bar_metrics[:6]):
+                        with bar_cols[bi % 3]:
+                            vals = [_aggregate_scenario_metrics(s).get(metric, 0) for s in compare_data]
+                            fig  = go.Figure(go.Bar(
+                                x=sc_labels, y=vals,
+                                customdata=sc_names,
+                                hovertemplate='<b>%{customdata}</b><br>' + COL_FMT[metric][0] + ': %{text}<extra></extra>',
+                                marker_color=sc_colors,
+                                text=[COL_FMT[metric][1](v) for v in vals],
+                                textposition='outside',
+                                textfont={'size': 11},
+                            ))
+                            fig.update_layout(
+                                title={'text': COL_FMT[metric][0],
+                                       'font': {'size': 14, 'color': '#1e293b'}, 'x': 0.5, 'xanchor': 'center'},
+                                margin={'t': 40, 'b': 60, 'l': 10, 'r': 10},
+                                height=230,
+                                paper_bgcolor='rgba(0,0,0,0)',
+                                yaxis={'showticklabels': False, 'showgrid': False, 'zeroline': False},
+                                xaxis={'tickfont': {'size': 12}, 'tickangle': -20},
+                            )
+                            st.plotly_chart(fig, use_container_width=True,
+                                            config={'displayModeBar': False}, key=f'bar_{metric}')
 
-            # ── AI deep-dive ──────────────────────────────────────────────────
-            if st.button('Generate AI Comparison', key='btn_compare'):
-                api_key = get_api_key()
-                if not api_key:
-                    st.error('No API key found in .streamlit/secrets.toml')
-                else:
-                    def _scenario_block(s):
-                        agg = _aggregate_scenario_metrics(s)
-                        lines = [f"Scenario: {s['name']}"]
-                        lines.append(f"  Total budget: €{s['grand_total_bud']:,.0f}")
-                        lines.append(f"  Markets ({len(s['selected_markets'])}): {', '.join(MARKET_LABELS[m] for m in s['selected_markets'])}")
-                        for goal, chs in s['goal_channels'].items():
-                            lines.append(f"  Goal: {goal} | Channels: {', '.join(chs)}")
-                        lines.append('  Aggregated KPIs:')
-                        for col in ADDITIVE:
-                            if col in agg and agg[col] > 0:
-                                lines.append(f'    {COL_FMT[col][0]}: {COL_FMT[col][1](agg[col])}')
-                        lines.append('  KPIs by goal and channel:')
-                        lines.append(_kpi_rows(s, agg))
-                        return '\n'.join(lines)
+                st.divider()
 
-                    scenarios_text = '\n\n'.join(_scenario_block(s) for s in all_scenarios_data)
-                    compare_prompt = f"""You are a senior paid media strategist comparing {len(all_scenarios_data)} media plan scenarios for a {audience_type} brand in the {industry} sector.
+                # ── AI deep-dive ──────────────────────────────────────────────
+                if st.button('Generate AI Comparison', key='btn_compare'):
+                    api_key = get_api_key()
+                    if not api_key:
+                        st.error('No API key found in .streamlit/secrets.toml')
+                    else:
+                        def _scenario_block(s):
+                            agg = _aggregate_scenario_metrics(s)
+                            lines = [f"Scenario: {s['name']}"]
+                            lines.append(f"  Total budget: €{s['grand_total_bud']:,.0f}")
+                            lines.append(f"  Markets ({len(s['selected_markets'])}): {', '.join(MARKET_LABELS[m] for m in s['selected_markets'])}")
+                            for goal, chs in s['goal_channels'].items():
+                                lines.append(f"  Goal: {goal} | Channels: {', '.join(chs)}")
+                            lines.append('  Aggregated KPIs:')
+                            for col in ADDITIVE:
+                                if col in agg and agg[col] > 0:
+                                    lines.append(f'    {COL_FMT[col][0]}: {COL_FMT[col][1](agg[col])}')
+                            lines.append('  KPIs by goal and channel:')
+                            lines.append(_kpi_rows(s, agg))
+                            return '\n'.join(lines)
+
+                        scenarios_text = '\n\n'.join(_scenario_block(s) for s in compare_data)
+                        compare_prompt = f"""You are a senior paid media strategist comparing {len(compare_data)} media plan scenarios for a {audience_type} brand in the {industry} sector.
 
 {scenarios_text}
 
@@ -1942,39 +1954,39 @@ BEST FOR KPI PERFORMANCE:
 
 No bullet points. Write like a strategist presenting to a client."""
 
-                    import anthropic as _anthropic
-                    client = _anthropic.Anthropic(api_key=api_key)
-                    with st.spinner('Comparing scenarios...'):
-                        msg = client.messages.create(
-                            model='claude-haiku-4-5-20251001',
-                            max_tokens=1100,
-                            messages=[{'role': 'user', 'content': compare_prompt}]
-                        )
-                    raw = msg.content[0].text
-                    import re as _re
-                    blocks = _re.split(r'\n(SCENARIO|STRENGTHS|WEAKNESSES|VERDICT|BEST FOR BUDGET EFFICIENCY|BEST FOR KPI PERFORMANCE):\s*', raw)
-                    if len(blocks) > 1:
-                        labels = blocks[1::2]
-                        bodies = blocks[2::2]
-                        palette = {
-                            'SCENARIO':                   ('#1F497D', 'white'),
-                            'STRENGTHS':                  ('#1F6152', 'white'),
-                            'WEAKNESSES':                 ('#8B3A3A', 'white'),
-                            'VERDICT':                    ('#437CA3', 'white'),
-                            'BEST FOR BUDGET EFFICIENCY': ('#5A3E7A', 'white'),
-                            'BEST FOR KPI PERFORMANCE':   ('#2D6A8A', 'white'),
-                        }
-                        for label, body in zip(labels, bodies):
-                            bg, fg = palette.get(label, ('#555', 'white'))
-                            st.markdown(
-                                f'<div style="background:{bg};color:{fg};padding:6px 12px;border-radius:4px 4px 0 0;'
-                                f'font-weight:bold;margin-top:10px">{label}</div>'
-                                f'<div style="background:#f5f5f5;padding:10px 12px;border-radius:0 0 4px 4px;'
-                                f'margin-bottom:2px">{body.strip()}</div>',
-                                unsafe_allow_html=True,
+                        import anthropic as _anthropic
+                        client = _anthropic.Anthropic(api_key=api_key)
+                        with st.spinner('Comparing scenarios...'):
+                            msg = client.messages.create(
+                                model='claude-haiku-4-5-20251001',
+                                max_tokens=1100,
+                                messages=[{'role': 'user', 'content': compare_prompt}]
                             )
-                    else:
-                        st.markdown(raw)
+                        raw = msg.content[0].text
+                        import re as _re
+                        blocks = _re.split(r'\n(SCENARIO|STRENGTHS|WEAKNESSES|VERDICT|BEST FOR BUDGET EFFICIENCY|BEST FOR KPI PERFORMANCE):\s*', raw)
+                        if len(blocks) > 1:
+                            labels = blocks[1::2]
+                            bodies = blocks[2::2]
+                            palette = {
+                                'SCENARIO':                   ('#1F497D', 'white'),
+                                'STRENGTHS':                  ('#1F6152', 'white'),
+                                'WEAKNESSES':                 ('#8B3A3A', 'white'),
+                                'VERDICT':                    ('#437CA3', 'white'),
+                                'BEST FOR BUDGET EFFICIENCY': ('#5A3E7A', 'white'),
+                                'BEST FOR KPI PERFORMANCE':   ('#2D6A8A', 'white'),
+                            }
+                            for label, body in zip(labels, bodies):
+                                bg, fg = palette.get(label, ('#555', 'white'))
+                                st.markdown(
+                                    f'<div style="background:{bg};color:{fg};padding:6px 12px;border-radius:4px 4px 0 0;'
+                                    f'font-weight:bold;margin-top:10px">{label}</div>'
+                                    f'<div style="background:#f5f5f5;padding:10px 12px;border-radius:0 0 4px 4px;'
+                                    f'margin-bottom:2px">{body.strip()}</div>',
+                                    unsafe_allow_html=True,
+                                )
+                        else:
+                            st.markdown(raw)
 
 
 # ── AI Insights & Recommendations ────────────────────────────────────────────
