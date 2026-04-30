@@ -1425,44 +1425,31 @@ def _render_scenario(sid):
     with st.expander('📁 Templates', expanded=False):
         custom_tpls = st.session_state.get('custom_templates', {})
 
-        # ── Built-in ──────────────────────────────────────────────────────────
-        st.markdown('<small style="color:#6b7280;font-weight:600;text-transform:uppercase;'
-                    'letter-spacing:0.06em">Built-in</small>', unsafe_allow_html=True)
-        tpl_options = ['— pick a template —'] + list(PLAN_TEMPLATES.keys())
-        tpl_sel = st.selectbox('Template', tpl_options, key=f'tpl_{sid}',
+        # ── Combined dropdown (built-in + saved) ──────────────────────────────
+        bi_options   = list(PLAN_TEMPLATES.keys())
+        cust_options = [f'★ {n}' for n in custom_tpls.keys()]
+        all_options  = ['— pick a template —'] + bi_options + cust_options
+        tpl_sel = st.selectbox('Template', all_options, key=f'tpl_{sid}',
                                label_visibility='collapsed')
+
         if tpl_sel != '— pick a template —':
-            if st.button(f'Apply "{tpl_sel}"', key=f'tpl_apply_{sid}'):
-                _apply_template(sid, tpl_sel)
+            is_custom   = tpl_sel.startswith('★ ')
+            actual_name = tpl_sel[2:] if is_custom else tpl_sel
 
-        st.divider()
-
-        # ── Your saved templates ──────────────────────────────────────────────
-        st.markdown('<small style="color:#6b7280;font-weight:600;text-transform:uppercase;'
-                    'letter-spacing:0.06em">Your saved templates</small>', unsafe_allow_html=True)
-        if custom_tpls:
-            for tpl_name, tpl_data in list(custom_tpls.items()):
-                goals_summary = '  ·  '.join(
-                    f"{g}: {', '.join(chs)}" for g, chs in tpl_data.get('goals', {}).items()
-                )
+            if is_custom:
+                tpl_data = custom_tpls[actual_name]
                 mkts = ', '.join(MARKET_LABELS.get(m, m) for m in tpl_data.get('markets', []))
-                st.markdown(
-                    f'<div style="font-size:0.82rem;font-weight:600;margin-bottom:2px">{tpl_name}</div>'
-                    f'<div style="font-size:0.75rem;color:#6b7280;margin-bottom:6px">'
-                    f'€{tpl_data.get("budget", 0):,.0f} · {mkts}<br>{goals_summary}</div>',
-                    unsafe_allow_html=True,
-                )
-                ca, cb = st.columns([3, 1])
-                safe = tpl_name.replace(' ', '_')[:24]
-                if ca.button(f'Apply', key=f'tpl_apply_custom_{safe}_{sid}',
-                             use_container_width=True):
+                st.caption(f'€{tpl_data.get("budget", 0):,.0f} · {mkts}')
+                ba, bb = st.columns([3, 1])
+                if ba.button('Apply', key=f'tpl_apply_cust_{sid}', use_container_width=True):
                     _apply_template_data(sid, tpl_data)
-                if cb.button('✕ Delete', key=f'del_tpl_{safe}_{sid}',
-                             use_container_width=True):
-                    del st.session_state['custom_templates'][tpl_name]
+                safe = actual_name.replace(' ', '_')[:24]
+                if bb.button('✕ Delete', key=f'del_tpl_{safe}_{sid}', use_container_width=True):
+                    del st.session_state['custom_templates'][actual_name]
                     st.rerun()
-        else:
-            st.caption('No saved templates yet.')
+            else:
+                if st.button(f'Apply "{actual_name}"', key=f'tpl_apply_bi_{sid}'):
+                    _apply_template(sid, actual_name)
 
         st.divider()
 
@@ -1470,7 +1457,6 @@ def _render_scenario(sid):
         st.markdown('<small style="color:#6b7280;font-weight:600;text-transform:uppercase;'
                     'letter-spacing:0.06em">Save current as template</small>',
                     unsafe_allow_html=True)
-        # Clear the input after a successful save by resetting via a pending flag
         _tpl_key = f'tpl_name_{sid}'
         if st.session_state.pop(f'_tpl_name_clear_{sid}', False):
             st.session_state[_tpl_key] = ''
@@ -1635,52 +1621,50 @@ def _render_scenario(sid):
 
     for mkt in s_markets:
         mkt_budget = s_market_budgets[mkt]
+        is_pinned  = (st.session_state.get(f'pinned_country_{sid}') == mkt)
+        pin_label  = f'  📌' if is_pinned else ''
+        mkt_label  = MARKET_LABELS[mkt]
 
-        # Country heading with pin toggle
-        h_col, pin_col = st.columns([12, 1])
-        is_pinned = (st.session_state.get(f'pinned_country_{sid}') == mkt)
-        h_col.subheader(MARKET_LABELS[mkt])
-        pin_icon = '☑' if is_pinned else '☐'
-        pin_tip  = 'Unpin this country' if is_pinned else 'Pin to top for comparison while scrolling'
-        if pin_col.button(pin_icon, key=f'pin_{mkt}_{sid}',
-                          use_container_width=True, help=pin_tip):
-            if is_pinned:
-                st.session_state.pop(f'pinned_country_{sid}', None)
+        with st.expander(f'{mkt_label}{pin_label}', expanded=True):
+            # Pin toggle inside the expander
+            pin_icon = 'Unpin' if is_pinned else '📌 Pin to top'
+            pin_tip  = 'Unpin this country' if is_pinned else 'Pin to top for comparison while scrolling'
+            if st.button(pin_icon, key=f'pin_{mkt}_{sid}', help=pin_tip):
+                if is_pinned:
+                    st.session_state.pop(f'pinned_country_{sid}', None)
+                else:
+                    st.session_state[f'pinned_country_{sid}'] = mkt
+                st.rerun()
+
+            if len(selected_goals) > 1:
+                goal_tabs = st.tabs(selected_goals)
+                for tab, goal in zip(goal_tabs, selected_goals):
+                    with tab:
+                        goal_chs = goal_channels[goal]
+                        ch_budgets = _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid)
+                        render_goal_section(mkt, goal, goal_chs, ch_budgets, periods, grand_totals, sid)
             else:
-                st.session_state[f'pinned_country_{sid}'] = mkt
-            st.rerun()
+                goal = selected_goals[0]
+                goal_chs = goal_channels[goal]
+                ch_budgets = _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid)
+                render_goal_section(mkt, goal, goal_chs, ch_budgets, periods, grand_totals, sid)
 
-        if len(selected_goals) > 1:
-            goal_tabs = st.tabs(selected_goals)
-            for tab, goal in zip(goal_tabs, selected_goals):
-                with tab:
-                    goal_chs = goal_channels[goal]
-                    ch_budgets = _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid)
-                    render_goal_section(mkt, goal, goal_chs, ch_budgets, periods, grand_totals, sid)
-        else:
-            goal = selected_goals[0]
-            goal_chs = goal_channels[goal]
-            ch_budgets = _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid)
-            render_goal_section(mkt, goal, goal_chs, ch_budgets, periods, grand_totals, sid)
-
-        # Cache KPI totals for the pinned panel (available on next render)
-        if mkt == st.session_state.get(f'pinned_country_{sid}'):
-            kpi_cache = {}
-            for g in selected_goals:
-                for ch in goal_channels[g]:
-                    rows = grand_totals[g][ch]
-                    if rows:
-                        t = rows[-1].iloc[0]
-                        parts = [
-                            f'{COL_FMT[c][0]}: {COL_FMT[c][1](t[c])}'
-                            for c in ['impressions', 'reach', 'views', 'clicks', 'sessions', 'conversions']
-                            if c in t.index and t[c] > 0
-                        ]
-                        if parts:
-                            kpi_cache[f'{g} · {ch}'] = ' | '.join(parts[:3])
-            st.session_state[f'cached_kpis_{pinned_mkt}_{sid}'] = kpi_cache
-
-        st.divider()
+            # Cache KPI totals for the pinned panel (available on next render)
+            if mkt == st.session_state.get(f'pinned_country_{sid}'):
+                kpi_cache = {}
+                for g in selected_goals:
+                    for ch in goal_channels[g]:
+                        rows = grand_totals[g][ch]
+                        if rows:
+                            t = rows[-1].iloc[0]
+                            parts = [
+                                f'{COL_FMT[c][0]}: {COL_FMT[c][1](t[c])}'
+                                for c in ['impressions', 'reach', 'views', 'clicks', 'sessions', 'conversions']
+                                if c in t.index and t[c] > 0
+                            ]
+                            if parts:
+                                kpi_cache[f'{g} · {ch}'] = ' | '.join(parts[:3])
+                st.session_state[f'cached_kpis_{pinned_mkt}_{sid}'] = kpi_cache
 
     st.subheader('Grand Total — All Markets')
     for goal in selected_goals:
