@@ -808,44 +808,37 @@ def _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid):
 
 def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end_date, breakdown='Weekly'):
     """
-    One workbook. One tab per country (× scenario if multiple).
-    Layout: metric blocks (3 per horizontal row, periods as rows) + daily budget section below.
+    One workbook. One tab per country.
+    Layout: goal sections stacked vertically → channel subsection → flat period table.
+    Columns are phase-appropriate (PHASE_COLS).
     """
     from openpyxl.utils import get_column_letter
 
     # ── Colour palette ────────────────────────────────────────────────────────
-    C_DARK_BLUE  = PatternFill('solid', fgColor='1F3864')  # dark navy — block headers / title
-    C_MED_BLUE   = PatternFill('solid', fgColor='2E75B6')  # medium blue — channel sub-headers
-    C_LIGHT_BLUE = PatternFill('solid', fgColor='CFE1F3')  # light blue — TOTAL rows
-    C_PERIOD     = PatternFill('solid', fgColor='D9E1F2')  # soft blue-grey — period label cells
-    C_DATA       = PatternFill('solid', fgColor='FFFFFF')  # white — data cells
-    C_DAILY      = PatternFill('solid', fgColor='FFF2CC')  # light yellow — daily budget cells
+    C_TITLE  = PatternFill('solid', fgColor='1F3864')  # dark navy — title
+    C_GOAL   = PatternFill('solid', fgColor='1F3864')  # dark navy — goal section header
+    C_CH     = PatternFill('solid', fgColor='2E75B6')  # medium blue — channel header
+    C_HDR    = PatternFill('solid', fgColor='4472C4')  # blue — column header row
+    C_TOTAL  = PatternFill('solid', fgColor='CFE1F3')  # light blue — TOTAL row
+    C_ODD    = PatternFill('solid', fgColor='FFFFFF')  # white — odd data rows
+    C_EVEN   = PatternFill('solid', fgColor='EEF3FB')  # very light blue — even data rows
 
     F_WHITE_B = Font(color='FFFFFF', bold=True)
     F_BOLD    = Font(bold=True)
     F_NORMAL  = Font()
-    ALIGN_C   = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    ALIGN_L   = Alignment(horizontal='left', vertical='center')
+    AC = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    AL = Alignment(horizontal='left',   vertical='center')
 
-    # Nine metric blocks arranged as three stacked sections (3 blocks each)
-    SECTIONS = [
-        [
-            ('INVESTMENT',  'budget',       '#,##0.00'),
-            ('CPC / CPM',   'cpc_cpm',      '#,##0.00'),
-            ('IMPRESSIONS', 'impressions',  '#,##0'),
-        ],
-        [
-            ('CTR',         'ctr',          '0.00%'),
-            ('CLICKS',      'clicks',       '#,##0'),
-            ('SESSIONS',    'sessions',     '#,##0'),
-        ],
-        [
-            ('CONV. RATE',  'conv_rate',    '0.00%'),
-            ('LEADS',       'conversions',  '#,##0'),
-            ('CPL',         'cpl',          '#,##0.00'),
-        ],
-    ]
-    CH_ORDER = ['LinkedIn', 'Search', 'YouTube']
+    # Number format per column key
+    _PCT_KEYS = {'ctr', 'view_rate', 'click_to_session', 'conv_rate',
+                 'lead_to_mql', 'mql_to_sql', 'cvr'}
+    _EUR_KEYS = {'Budget', 'cpc', 'cpa', 'cpv', 'eff_cpm',
+                 'cost_per_mql', 'cost_per_sql'}
+
+    def _num_fmt(key):
+        if key in _PCT_KEYS: return '0.00%'
+        if key in _EUR_KEYS: return '#,##0.00'
+        return '#,##0'
 
     # ── Tab grouping: one per (market × scenario if market appears in 2+) ────
     market_count = {}
@@ -865,209 +858,114 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    periods = generate_periods(start_date, end_date, breakdown)
-    total_days = sum(p['days'] for p in periods) or 1
+    periods     = generate_periods(start_date, end_date, breakdown)
+    total_days  = sum(p['days'] for p in periods) or 1
 
     for tab_name, s, sid, mkt in tabs:
         ws = wb.create_sheet(title=tab_name)
         mkt_label  = MARKET_LABELS.get(mkt, mkt)
         mkt_budget = s['market_budgets'][mkt]
 
-        active_channels = [c for c in CH_ORDER
-                           if any(c in chs for chs in s['goal_channels'].values())]
-        n_ch = len(active_channels) or 1
-        n_section_cols = 1 + 3 * n_ch  # period col + 3 blocks × n channels
-
-        # ── Accumulate per-channel, per-period metrics across all goals ──────
-        period_raw = {ch: {} for ch in active_channels}
-        total_raw  = {ch: {'budget': 0, 'impressions': 0, 'clicks': 0,
-                           'sessions': 0, 'conversions': 0}
-                      for ch in active_channels}
-
-        for goal, goal_chs in s['goal_channels'].items():
-            ch_budgets = _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid)
-            for ch in goal_chs:
-                if ch not in active_channels:
-                    continue
-                ch_bud    = ch_budgets.get(ch, 0)
-                bm        = _get_bm_ss(ch, mkt, goal, sid)
-                conv_rate = bm.get('conv_rate', 0.02)
-
-                for p in periods:
-                    bud_p = ch_bud * p['days'] / total_days
-                    row_m = calc_row(bud_p, bm, goal, ch, conv_rate)
-
-                    if p['label'] not in period_raw[ch]:
-                        period_raw[ch][p['label']] = {
-                            'days': p['days'],
-                            'budget': 0, 'impressions': 0, 'clicks': 0,
-                            'sessions': 0, 'conversions': 0,
-                        }
-                    d = period_raw[ch][p['label']]
-                    d['budget']      += row_m.get('Budget', 0)
-                    d['impressions'] += row_m.get('impressions', 0)
-                    d['clicks']      += row_m.get('clicks', 0)
-                    d['sessions']    += row_m.get('sessions', 0)
-                    d['conversions'] += row_m.get('conversions', 0)
-
-                    t = total_raw[ch]
-                    t['budget']      += row_m.get('Budget', 0)
-                    t['impressions'] += row_m.get('impressions', 0)
-                    t['clicks']      += row_m.get('clicks', 0)
-                    t['sessions']    += row_m.get('sessions', 0)
-                    t['conversions'] += row_m.get('conversions', 0)
-
-        def _derive(ch, d):
-            bud  = d.get('budget', 0)
-            imp  = d.get('impressions', 0)
-            clk  = d.get('clicks', 0)
-            ses  = d.get('sessions', 0)
-            conv = d.get('conversions', 0)
-            cpc_cpm = (bud / clk if clk > 0 else 0) if ch == 'Search' \
-                      else (bud / imp * 1000 if imp > 0 else 0)
-            return {
-                'budget':      bud,
-                'impressions': imp,
-                'clicks':      clk,
-                'sessions':    ses,
-                'conversions': conv,
-                'cpc_cpm':     cpc_cpm,
-                'ctr':         clk / imp if imp > 0 else 0,
-                'conv_rate':   conv / ses if ses > 0 else 0,
-                'cvr':         conv / clk if clk > 0 else 0,
-                'cpl':         bud / conv if conv > 0 else 0,
-            }
+        # Work out the widest column count needed for merging titles
+        max_data_cols = max(
+            (len(PHASE_COLS.get((ch, goal), [])) for goal, chs in s['goal_channels'].items()
+             for ch in chs), default=8
+        )
+        n_cols_total = 1 + max_data_cols  # period label + data cols
 
         # ── Title rows ───────────────────────────────────────────────────────
         row = 1
         flight = f"{start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
         title  = f"{mkt_label}  —  {campaign_name}  —  {s['name']}"
-        for r_off, (txt, fnt, ht) in enumerate([
+        for txt, fnt, ht in [
             (title, Font(color='FFFFFF', bold=True, size=13), 22),
-            (f"Budget: €{mkt_budget:,.0f}  |  {flight}  |  {breakdown}", Font(color='FFFFFF', size=10), 15),
-        ]):
-            cell = ws.cell(row=row + r_off, column=1, value=txt)
-            cell.fill = C_DARK_BLUE; cell.font = fnt; cell.alignment = ALIGN_L
-            ws.merge_cells(start_row=row + r_off, start_column=1,
-                           end_row=row + r_off, end_column=n_section_cols)
-            ws.row_dimensions[row + r_off].height = ht
-        row += 3  # 2 title rows + 1 blank
+            (f"Budget: €{mkt_budget:,.0f}  |  {flight}  |  {breakdown}",
+             Font(color='FFFFFF', size=10), 15),
+        ]:
+            c = ws.cell(row=row, column=1, value=txt)
+            c.fill = C_TITLE; c.font = fnt; c.alignment = AL
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=n_cols_total)
+            ws.row_dimensions[row].height = ht
+            row += 1
+        row += 1  # blank after titles
 
-        # ── Metric sections (3 stacked, each with 3 blocks horizontally) ─────
-        for section in SECTIONS:
-            # Block-name header row (dark blue, merged per block)
-            cell = ws.cell(row=row, column=1, value='')
-            cell.fill = C_DARK_BLUE
-            for b_idx, (block_name, metric_key, num_fmt) in enumerate(section):
-                sc = 2 + b_idx * n_ch
-                ec = sc + n_ch - 1
-                cell = ws.cell(row=row, column=sc, value=block_name)
-                cell.fill = C_DARK_BLUE; cell.font = F_WHITE_B; cell.alignment = ALIGN_C
-                if n_ch > 1:
-                    ws.merge_cells(start_row=row, start_column=sc,
-                                   end_row=row, end_column=ec)
-                for ci in range(sc + 1, ec + 1):
-                    ws.cell(row=row, column=ci).fill = C_DARK_BLUE
-            ws.row_dimensions[row].height = 18
+        # ── Goal sections ─────────────────────────────────────────────────────
+        for goal in ['Awareness', 'Traffic', 'Conversion']:
+            if goal not in s['goal_channels']:
+                continue
+            goal_chs   = s['goal_channels'][goal]
+            ch_budgets = _get_ch_budgets_ss(mkt, goal, goal_chs, mkt_budget, sid)
+
+            # Goal header (dark navy, merged)
+            c = ws.cell(row=row, column=1, value=goal.upper())
+            c.fill = C_GOAL; c.font = F_WHITE_B
+            c.alignment = Alignment(horizontal='center', vertical='center')
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=n_cols_total)
+            ws.row_dimensions[row].height = 20
             row += 1
 
-            # Channel sub-header row (medium blue)
-            cell = ws.cell(row=row, column=1, value='PERIOD')
-            cell.fill = C_MED_BLUE; cell.font = F_WHITE_B; cell.alignment = ALIGN_C
-            for b_idx in range(len(section)):
-                for ch_idx, ch in enumerate(active_channels):
-                    cell = ws.cell(row=row, column=2 + b_idx * n_ch + ch_idx, value=ch)
-                    cell.fill = C_MED_BLUE; cell.font = F_WHITE_B; cell.alignment = ALIGN_C
-            ws.row_dimensions[row].height = 16
-            row += 1
+            for ch in goal_chs:
+                ch_bud    = ch_budgets.get(ch, 0)
+                bm        = _get_bm_ss(ch, mkt, goal, sid)
+                conv_rate = bm.get('conv_rate', 0.02)
 
-            # Period data rows
-            for p in periods:
-                p_label = p['label']
-                cell = ws.cell(row=row, column=1, value=p_label)
-                cell.fill = C_PERIOD; cell.font = F_BOLD; cell.alignment = ALIGN_C
-                for b_idx, (block_name, metric_key, num_fmt) in enumerate(section):
-                    for ch_idx, ch in enumerate(active_channels):
-                        col = 2 + b_idx * n_ch + ch_idx
-                        derived = _derive(ch, period_raw[ch].get(p_label, {}))
-                        val = derived.get(metric_key, 0)
-                        cell = ws.cell(row=row, column=col, value=val)
-                        cell.fill = C_DATA; cell.font = F_NORMAL; cell.alignment = ALIGN_C
-                        cell.number_format = num_fmt
+                df        = build_table(periods, ch_bud, bm, goal, ch, conv_rate)
+                data_rows = df[df['Period'] != 'TOTAL']
+                total_row = df[df['Period'] == 'TOTAL'].iloc[0]
+
+                col_keys = PHASE_COLS.get((ch, goal), list(_TRAFFIC_COLS))
+                n_ch_cols = len(col_keys) + 1  # +1 for Period
+
+                # Channel sub-header (medium blue)
+                c = ws.cell(row=row, column=1, value=ch)
+                c.fill = C_CH; c.font = F_WHITE_B
+                c.alignment = Alignment(horizontal='center', vertical='center')
+                ws.merge_cells(start_row=row, start_column=1,
+                               end_row=row, end_column=n_ch_cols)
+                ws.row_dimensions[row].height = 16
                 row += 1
 
-            # TOTAL row
-            cell = ws.cell(row=row, column=1, value='TOTAL')
-            cell.fill = C_LIGHT_BLUE; cell.font = F_BOLD; cell.alignment = ALIGN_C
-            for b_idx, (block_name, metric_key, num_fmt) in enumerate(section):
-                for ch_idx, ch in enumerate(active_channels):
-                    col = 2 + b_idx * n_ch + ch_idx
-                    derived = _derive(ch, total_raw[ch])
-                    val = derived.get(metric_key, 0)
-                    cell = ws.cell(row=row, column=col, value=val)
-                    cell.fill = C_LIGHT_BLUE; cell.font = F_BOLD; cell.alignment = ALIGN_C
-                    cell.number_format = num_fmt
-            ws.row_dimensions[row].height = 15
-            row += 2  # TOTAL + blank separator
+                # Column header row
+                c = ws.cell(row=row, column=1, value='PERIOD')
+                c.fill = C_HDR; c.font = F_WHITE_B; c.alignment = AC
+                for ci, key in enumerate(col_keys, 2):
+                    label = COL_FMT[key][0] if key in COL_FMT else key
+                    c = ws.cell(row=row, column=ci, value=label)
+                    c.fill = C_HDR; c.font = F_WHITE_B; c.alignment = AC
+                ws.row_dimensions[row].height = 28
+                row += 1
 
-        # ── Daily Budget section ──────────────────────────────────────────────
-        row += 1
-        db_n_cols = 2 + n_ch  # period + channels + total
-        cell = ws.cell(row=row, column=1, value='DAILY BUDGET')
-        cell.fill = C_DARK_BLUE; cell.font = Font(color='FFFFFF', bold=True)
-        cell.alignment = ALIGN_L
-        ws.merge_cells(start_row=row, start_column=1,
-                       end_row=row, end_column=db_n_cols)
-        ws.row_dimensions[row].height = 18
-        row += 1
+                # Period data rows
+                for r_idx, (_, dr) in enumerate(data_rows.iterrows()):
+                    fill = C_ODD if r_idx % 2 == 0 else C_EVEN
+                    c = ws.cell(row=row, column=1, value=str(dr['Period']))
+                    c.fill = fill; c.font = F_BOLD; c.alignment = AC
+                    for ci, key in enumerate(col_keys, 2):
+                        val = float(dr[key]) if key in dr.index and dr[key] == dr[key] else 0.0
+                        c = ws.cell(row=row, column=ci, value=val)
+                        c.fill = fill; c.font = F_NORMAL; c.alignment = AC
+                        c.number_format = _num_fmt(key)
+                    row += 1
 
-        # Channel headers
-        cell = ws.cell(row=row, column=1, value='PERIOD')
-        cell.fill = C_MED_BLUE; cell.font = F_WHITE_B; cell.alignment = ALIGN_C
-        for ch_idx, ch in enumerate(active_channels):
-            cell = ws.cell(row=row, column=2 + ch_idx, value=ch)
-            cell.fill = C_MED_BLUE; cell.font = F_WHITE_B; cell.alignment = ALIGN_C
-        cell = ws.cell(row=row, column=2 + n_ch, value='TOTAL')
-        cell.fill = C_MED_BLUE; cell.font = F_WHITE_B; cell.alignment = ALIGN_C
-        ws.row_dimensions[row].height = 16
-        row += 1
+                # TOTAL row
+                c = ws.cell(row=row, column=1, value='TOTAL')
+                c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
+                for ci, key in enumerate(col_keys, 2):
+                    val = float(total_row[key]) if key in total_row.index and total_row[key] == total_row[key] else 0.0
+                    c = ws.cell(row=row, column=ci, value=val)
+                    c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
+                    c.number_format = _num_fmt(key)
+                ws.row_dimensions[row].height = 15
+                row += 2  # TOTAL + blank
 
-        for p in periods:
-            p_label = p['label']
-            cell = ws.cell(row=row, column=1, value=p_label)
-            cell.fill = C_PERIOD; cell.font = F_BOLD; cell.alignment = ALIGN_C
-            day_total = 0
-            for ch_idx, ch in enumerate(active_channels):
-                d    = period_raw[ch].get(p_label, {})
-                days = d.get('days', p['days']) or 1
-                daily = d.get('budget', 0) / days
-                day_total += daily
-                cell = ws.cell(row=row, column=2 + ch_idx, value=round(daily, 2))
-                cell.fill = C_DAILY; cell.font = F_NORMAL; cell.alignment = ALIGN_C
-                cell.number_format = '#,##0.00'
-            cell = ws.cell(row=row, column=2 + n_ch, value=round(day_total, 2))
-            cell.fill = C_DAILY; cell.font = F_BOLD; cell.alignment = ALIGN_C
-            cell.number_format = '#,##0.00'
-            row += 1
-
-        # Daily budget TOTAL row (average daily across full flight)
-        cell = ws.cell(row=row, column=1, value='TOTAL')
-        cell.fill = C_LIGHT_BLUE; cell.font = F_BOLD; cell.alignment = ALIGN_C
-        avg_total = 0
-        for ch_idx, ch in enumerate(active_channels):
-            avg = total_raw[ch]['budget'] / total_days
-            avg_total += avg
-            cell = ws.cell(row=row, column=2 + ch_idx, value=round(avg, 2))
-            cell.fill = C_LIGHT_BLUE; cell.font = F_BOLD; cell.alignment = ALIGN_C
-            cell.number_format = '#,##0.00'
-        cell = ws.cell(row=row, column=2 + n_ch, value=round(avg_total, 2))
-        cell.fill = C_LIGHT_BLUE; cell.font = F_BOLD; cell.alignment = ALIGN_C
-        cell.number_format = '#,##0.00'
+            row += 1  # extra blank between goal sections
 
         # ── Column widths ─────────────────────────────────────────────────────
-        ws.column_dimensions['A'].width = 20
-        for i in range(2, n_section_cols + 2):
-            ws.column_dimensions[get_column_letter(i)].width = 13
+        ws.column_dimensions['A'].width = 18
+        for i in range(2, n_cols_total + 1):
+            ws.column_dimensions[get_column_letter(i)].width = 12
 
     buf = io.BytesIO()
     wb.save(buf)
