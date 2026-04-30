@@ -435,7 +435,7 @@ def _apply_template_data(sid, tpl):
         st.session_state[f'sb_goal_{goal}_{sid}'] = goal_on
         for ch, key in [('YouTube', 'sb_yt'), ('Search', 'sb_s'), ('LinkedIn', 'sb_li'), ('Display', 'sb_dis')]:
             st.session_state[f'{key}_{goal}_{sid}'] = goal_on and ch in tpl['goals'].get(goal, [])
-    st.rerun()
+    st.session_state['_pending_dup_rerun'] = True
 
 
 def _apply_template(sid, tpl_name):
@@ -571,7 +571,7 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
     for i, pname in enumerate(['Conservative', 'Average', 'Aggressive']):
         if pc[i].button(pname, key=f'preset_{pname}_{ch}_{mkt}_{goal}_{sid}', use_container_width=True):
             _apply_bench_preset(ch, mkt, goal, sid, pname)
-            st.rerun()
+            st.session_state['_pending_dup_rerun'] = True
 
     fields = []
     if ch == 'Search':
@@ -1453,7 +1453,7 @@ def _render_scenario(sid):
                 safe = actual_name.replace(' ', '_')[:24]
                 if bb.button('✕ Delete', key=f'del_tpl_{safe}_{sid}', use_container_width=True):
                     del st.session_state['custom_templates'][actual_name]
-                    st.rerun()
+                    st.session_state['_pending_dup_rerun'] = True
             else:
                 if st.button(f'Apply "{actual_name}"', key=f'tpl_apply_bi_{sid}'):
                     _apply_template(sid, actual_name)
@@ -1476,7 +1476,7 @@ def _render_scenario(sid):
             name = new_tpl_name.strip()
             st.session_state['custom_templates'][name] = _current_as_template(sid)
             st.session_state[f'_tpl_name_clear_{sid}'] = True
-            st.rerun()
+            st.session_state['_pending_dup_rerun'] = True
 
     st.divider()
 
@@ -1520,7 +1520,7 @@ def _render_scenario(sid):
                 current = list(st.session_state.get(f'selected_markets_{sid}', []))
                 merged  = current + [m for m in grp_mkts if m not in current]
                 st.session_state[f'selected_markets_{sid}'] = merged
-                st.rerun()
+                st.session_state['_pending_dup_rerun'] = True
         s_markets = st.multiselect(
             'Markets', list(MARKET_LABELS.keys()), default=[],
             format_func=lambda k: f'{k} — {MARKET_LABELS[k]}',
@@ -1544,7 +1544,7 @@ def _render_scenario(sid):
         if sc1.button('⚖ Equal split', key=f'eq_{sid}', use_container_width=True):
             for m in s_markets:
                 st.session_state[f'pct_{m}_{sid}'] = default_pct
-            st.rerun()
+            st.session_state['_pending_dup_rerun'] = True
         if sc2.button('📊 CPM-efficient', key=f'cpm_eff_{sid}', use_container_width=True,
                       help='More budget to cheaper markets to maximise impressions'):
             weights = {}
@@ -1555,7 +1555,7 @@ def _render_scenario(sid):
             total_w = sum(weights.values()) or 1
             for m in s_markets:
                 st.session_state[f'pct_{m}_{sid}'] = round(weights[m] / total_w * 100, 1)
-            st.rerun()
+            st.session_state['_pending_dup_rerun'] = True
 
         # Split inputs + donut side by side
         split_col, donut_col = st.columns([3, 2])
@@ -1645,7 +1645,7 @@ def _render_scenario(sid):
         if tog_col.button(tog_icon, key=f'mkt_tog_{mkt}_{sid}', use_container_width=True,
                           help='Collapse' if is_expanded else 'Expand'):
             st.session_state[exp_key] = not is_expanded
-            st.rerun()
+            st.session_state['_pending_dup_rerun'] = True
         pin_icon = '✕ Unpin' if is_pinned else '📌 Pin'
         pin_tip  = 'Unpin this country' if is_pinned else 'Pin to top for comparison while scrolling'
         if pin_col.button(pin_icon, key=f'pin_{mkt}_{sid}',
@@ -1654,7 +1654,7 @@ def _render_scenario(sid):
                 st.session_state.pop(f'pinned_country_{sid}', None)
             else:
                 st.session_state[f'pinned_country_{sid}'] = mkt
-            st.rerun()
+            st.session_state['_pending_dup_rerun'] = True
 
         if is_expanded:
             if len(selected_goals) > 1:
