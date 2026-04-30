@@ -416,7 +416,10 @@ def _duplicate_scenario(sid):
         m = pattern.match(str(k))
         if m and not any(str(k).startswith(p) for p in skip_prefixes):
             st.session_state[f'{m.group(1)}_{new_sid}'] = v
-    st.rerun()
+    # Don't call st.rerun() here — that would interrupt the mid-render tab loop,
+    # causing Streamlit to orphan widget state for tabs not yet rendered. Instead
+    # we set a flag and rerun AFTER the full tab loop finishes (see bottom of file).
+    st.session_state['_pending_dup_rerun'] = True
 
 
 def _apply_template_data(sid, tpl):
@@ -1747,6 +1750,11 @@ for sid, s_tab in enumerate(scenario_tabs):
                 key=f'dl_gads_{sid}',
                 use_container_width=True,
             )
+
+# Deferred rerun from _duplicate_scenario — all tabs have now fully rendered,
+# so no widget state will be orphaned by this rerun.
+if st.session_state.pop('_pending_dup_rerun', False):
+    st.rerun()
 
 # ── Combined Excel download (all scenarios as tabs) ───────────────────────────
 if all_scenarios_data:
