@@ -1958,7 +1958,7 @@ No bullet points. Write like a strategist presenting to a client."""
                         client = _anthropic.Anthropic(api_key=api_key)
                         with st.spinner('Comparing scenarios...'):
                             msg = client.messages.create(
-                                model='claude-haiku-4-5-20251001',
+                                model='claude-sonnet-4-6',
                                 max_tokens=1100,
                                 messages=[{'role': 'user', 'content': compare_prompt}]
                             )
@@ -2056,7 +2056,7 @@ Be direct. No headers. No bullet points. Write in plain paragraphs like a strate
             client = _anthropic.Anthropic(api_key=api_key)
             with st.spinner('Thinking...'):
                 msg = client.messages.create(
-                    model='claude-haiku-4-5-20251001',
+                    model='claude-sonnet-4-6',
                     max_tokens=400,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
@@ -2117,7 +2117,7 @@ Be direct. No headers. No bullet points. Write in plain paragraphs like a strate
             with st.chat_message('assistant'):
                 with st.spinner(''):
                     resp = client.messages.create(
-                        model='claude-haiku-4-5-20251001',
+                        model='claude-sonnet-4-6',
                         max_tokens=400,
                         messages=api_messages,
                     )
@@ -2163,7 +2163,7 @@ Be direct. No bullet points within sections."""
             client = _anthropic.Anthropic(api_key=api_key)
             with st.spinner('Thinking...'):
                 msg = client.messages.create(
-                    model='claude-haiku-4-5-20251001',
+                    model='claude-sonnet-4-6',
                     max_tokens=500,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
@@ -2243,7 +2243,7 @@ Be direct. No bullet points within sections."""
             with st.chat_message('assistant'):
                 with st.spinner(''):
                     resp = client.messages.create(
-                        model='claude-haiku-4-5-20251001',
+                        model='claude-sonnet-4-6',
                         max_tokens=400,
                         messages=api_messages,
                     )
@@ -2293,7 +2293,7 @@ Write in plain English. No jargon. One paragraph per topic. Frame everything for
             client = _anthropic.Anthropic(api_key=api_key)
             with st.spinner('Thinking...'):
                 msg = client.messages.create(
-                    model='claude-haiku-4-5-20251001',
+                    model='claude-sonnet-4-6',
                     max_tokens=400,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
@@ -2360,7 +2360,7 @@ Write in plain English. No jargon. One paragraph per topic. Frame everything for
             with st.chat_message('assistant'):
                 with st.spinner(''):
                     resp = client.messages.create(
-                        model='claude-haiku-4-5-20251001',
+                        model='claude-sonnet-4-6',
                         max_tokens=400,
                         messages=api_messages,
                     )
