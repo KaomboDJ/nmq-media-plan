@@ -507,6 +507,99 @@ def _apply_bench_preset(ch, mkt, goal, sid, preset_name):
         st.session_state[k] = v
 
 
+_BENCH_FIELDS = {
+    ('YouTube',  'Awareness'):  ['cpm', 'view_rate', 'ctr', 'frequency'],
+    ('YouTube',  'Traffic'):    ['cpm', 'ctr', 'click_to_session'],
+    ('YouTube',  'Conversion'): ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+    ('LinkedIn', 'Awareness'):  ['cpm', 'ctr', 'frequency'],
+    ('LinkedIn', 'Traffic'):    ['cpm', 'ctr', 'click_to_session'],
+    ('LinkedIn', 'Conversion'): ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+    ('Search',   'Awareness'):  ['cpc', 'ctr'],
+    ('Search',   'Traffic'):    ['cpc', 'ctr', 'click_to_session'],
+    ('Search',   'Conversion'): ['cpc', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+    ('Display',  'Awareness'):  ['cpm', 'ctr', 'frequency'],
+    ('Display',  'Traffic'):    ['cpm', 'ctr', 'click_to_session'],
+    ('Display',  'Conversion'): ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+}
+
+_BENCH_FIELD_DESC = {
+    'cpm':              'Cost per thousand impressions in EUR (e.g. 12.5)',
+    'cpc':              'Cost per click in EUR (e.g. 2.5)',
+    'ctr':              'Click-through rate as decimal proportion — NOT percentage (e.g. 0.003 for 0.3%)',
+    'view_rate':        'Video view/completion rate as decimal proportion (e.g. 0.30 for 30%)',
+    'frequency':        'Average ad exposures per unique user over the campaign flight (e.g. 3.0)',
+    'click_to_session': 'Post-click session rate as decimal proportion (e.g. 0.80 for 80%)',
+    'conv_rate':        'Session-to-lead conversion rate as decimal proportion (e.g. 0.02 for 2%)',
+    'lead_to_mql':      'Lead-to-MQL rate as decimal proportion (e.g. 0.20 for 20%)',
+    'mql_to_sql':       'MQL-to-SQL rate as decimal proportion (e.g. 0.30 for 30%)',
+}
+
+_PRESET_DESC = {
+    'Conservative': 'pessimistic but realistic — higher costs, lower engagement — safe for budget planning',
+    'Average':      'typical industry benchmark — most likely outcome based on current market conditions',
+    'Aggressive':   'optimistic stretch target — lower costs, higher engagement — best-case realistic scenario',
+}
+
+_BENCH_IS_PCT = {'ctr', 'view_rate', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'}
+
+
+def _apply_bench_preset_ai(ch, mkt, goal, sid, preset_name, audience, industry, api_key):
+    """Call Claude to get industry/audience-specific benchmarks. Returns True on success."""
+    import anthropic as _anthropic
+
+    fields = _BENCH_FIELDS.get((ch, goal), ['cpm', 'ctr'])
+    properties = {f: {'type': 'number', 'description': _BENCH_FIELD_DESC[f]} for f in fields}
+
+    tool_def = {
+        'name': 'set_benchmarks',
+        'description': 'Return calibrated benchmark values for the specified channel/goal/audience/industry combination.',
+        'input_schema': {'type': 'object', 'properties': properties, 'required': fields},
+    }
+
+    prompt = (
+        f'You are a digital advertising benchmark expert specialising in European paid media.\n'
+        f'Provide **{preset_name}** benchmark values for:\n'
+        f'- Channel: {ch}\n'
+        f'- Phase / Goal: {goal}\n'
+        f'- Audience: {audience}\n'
+        f'- Industry: {industry}\n'
+        f'- Market: {MARKET_LABELS[mkt]}\n\n'
+        f'{preset_name} means: {_PRESET_DESC[preset_name]}.\n\n'
+        f'Base your answer on 2025-2026 European digital advertising benchmarks '
+        f'specific to this audience type and industry. '
+        f'Adjust for the market — Western EU (DE, UK, FR, NL) costs more than Eastern EU (PL, RO, BG). '
+        f'Use the set_benchmarks tool to return the values. '
+        f'All rate fields must be decimal proportions, NOT percentages.'
+    )
+
+    try:
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=256,
+            tools=[tool_def],
+            tool_choice={'type': 'tool', 'name': 'set_benchmarks'},
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+        block = next((b for b in resp.content if b.type == 'tool_use'), None)
+        if not block:
+            return False
+        for field, raw_val in block.input.items():
+            if field not in fields:
+                continue
+            v = float(raw_val)
+            sk = f'{field}_{mkt}_{ch}_{goal}_{sid}'
+            if field in _BENCH_IS_PCT:
+                st.session_state[sk] = round(v * 100, 3)
+            elif field == 'frequency':
+                st.session_state[sk] = round(v, 1)
+            else:
+                st.session_state[sk] = round(v, 2)
+        return True
+    except Exception:
+        return False
+
+
 def _scenario_status(sid):
     ss = st.session_state
     has_goals   = any(ss.get(f'sb_goal_{g}_{sid}', False) for g in ALL_GOALS)
@@ -581,11 +674,23 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
     """Render benchmark inputs for one channel/market/goal. Returns a benchmark dict."""
     b = BENCH[mkt][ch]
 
-    # Preset buttons
+    # Preset buttons — AI-powered when API key is available, generic fallback otherwise
     pc = st.columns([1, 1, 1, 4])
+    _api_key_for_preset = get_api_key()
+    _audience_for_preset  = st.session_state.get('audience_type', 'B2B')
+    _industry_for_preset  = st.session_state.get('industry', 'Logistics, Supply Chain & Transportation')
     for i, pname in enumerate(['Conservative', 'Average', 'Aggressive']):
         if pc[i].button(pname, key=f'preset_{pname}_{ch}_{mkt}_{goal}_{sid}', use_container_width=True):
-            _apply_bench_preset(ch, mkt, goal, sid, pname)
+            if _api_key_for_preset:
+                with st.spinner(f'{pname} · {_audience_for_preset} · {_industry_for_preset} · {ch} {goal} · {MARKET_LABELS[mkt]}…'):
+                    ok = _apply_bench_preset_ai(
+                        ch, mkt, goal, sid, pname,
+                        _audience_for_preset, _industry_for_preset, _api_key_for_preset,
+                    )
+                if not ok:
+                    _apply_bench_preset(ch, mkt, goal, sid, pname)
+            else:
+                _apply_bench_preset(ch, mkt, goal, sid, pname)
             st.session_state['_pending_dup_rerun'] = True
 
     fields = []
