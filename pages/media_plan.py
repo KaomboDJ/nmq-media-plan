@@ -543,6 +543,21 @@ _PRESET_DESC = {
 _BENCH_IS_PCT = {'ctr', 'view_rate', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'}
 
 
+def get_api_key():
+    try:
+        key = st.secrets['anthropic'].get('api_key') or st.secrets['anthropic'].get('ANTHROPIC_API_KEY', '')
+        if key:
+            return key
+    except Exception:
+        pass
+    local = os.path.join(os.path.dirname(__file__), '.streamlit', 'secrets.toml')
+    try:
+        s = toml.load(local)
+        return s['anthropic'].get('api_key') or s['anthropic'].get('ANTHROPIC_API_KEY', '')
+    except Exception:
+        return ''
+
+
 def _apply_bench_preset_ai(ch, mkt, goal, sid, preset_name, audience, industry, api_key):
     """Call Claude to get industry/audience-specific benchmarks. Returns True on success."""
     import anthropic as _anthropic
@@ -1936,22 +1951,6 @@ if all_scenarios_data:
 
 
 # ── Compare tab (only when 2+ scenarios) ─────────────────────────────────────
-
-def get_api_key():
-    # Streamlit Cloud: secrets injected via dashboard
-    try:
-        key = st.secrets['anthropic'].get('api_key') or st.secrets['anthropic'].get('ANTHROPIC_API_KEY', '')
-        if key:
-            return key
-    except Exception:
-        pass
-    # Local fallback: read from .streamlit/secrets.toml next to app file
-    local = os.path.join(os.path.dirname(__file__), '.streamlit', 'secrets.toml')
-    try:
-        s = toml.load(local)
-        return s['anthropic'].get('api_key') or s['anthropic'].get('ANTHROPIC_API_KEY', '')
-    except Exception:
-        return ''
 
 def _aggregate_scenario_metrics(s):
     """Sum all additive metrics across goals and channels for a scenario."""
