@@ -2242,6 +2242,30 @@ def build_plan_summary():
         lines.append('')
     return '\n'.join(lines)
 
+# Curated benchmark source list — only cite from this list, never invent URLs
+_BENCHMARK_SOURCES = """
+YOUTUBE
+- WordStream Google Ads Benchmarks 2025: https://www.wordstream.com/blog/2025-google-ads-benchmarks
+- YouTube CPM Europe by Country 2026: https://fluxnote.io/guides/youtube-cpm-europe-by-country-2026
+- YouTube Ad Benchmarks (CPV, CPM, CTR): https://megadigital.ai/en/blog/youtube-ad-benchmarks/
+- YouTube Ads Benchmarks by Industry: https://www.storegrowers.com/youtube-ads-benchmarks/
+- YouTube CPM by Country Global Comparison 2026: https://upgrowth.in/youtube-cpm-by-country-global-comparison-2026/
+- YouTube CPM by Niche 2026: https://upgrowth.in/youtube-cpm-overview-highest-paying-niches-2026/
+
+LINKEDIN
+- LinkedIn Marketing Solutions Blog (official): https://business.linkedin.com/marketing-solutions/blog
+- Dreamdata LinkedIn Ads B2B Benchmarks: https://dreamdata.io/linkedin-ads-b2b-benchmarks
+
+SEARCH & DISPLAY
+- WordStream Google Ads Benchmarks 2025: https://www.wordstream.com/blog/2025-google-ads-benchmarks
+- HubSpot Marketing Statistics 2026: https://www.hubspot.com/marketing-statistics
+
+B2B & GENERAL
+- B2B Paid Awareness Benchmarks Q1 2026: https://refinelabs.com/article/b2b-paid-awareness-benchmarks-q1-2026
+- Paid Social Advertising Costs UK 2026: https://www.mediaperformance.co.uk/paid-social-advertising-costs-uk-2026/
+- Hootsuite Social Media Benchmarks 2026: https://blog.hootsuite.com/social-media-benchmarks/
+"""
+
 ai_tab_insights, ai_tab_recs, ai_tab_benchmarks = st.tabs([
     'Plan Insights', 'Market Recommendations', 'Benchmark Explanations'
 ])
@@ -2264,13 +2288,18 @@ Write a concise but sharp analysis (150–200 words). Cover:
 3. Any markets where the allocation looks strong or under-invested for this industry
 4. One clear watch-out or risk relevant to {audience_type} {industry} campaigns
 
-Be direct. No headers. No bullet points. Write in plain paragraphs like a strategist talking to a client."""
+Be direct. No headers. No bullet points. Write in plain paragraphs like a strategist talking to a client.
+
+After the analysis, add a 'Sources' section listing 2–4 of the most relevant URLs from the reference list below that support your specific points. Copy the URLs exactly as written — do not modify or invent any URL.
+
+Reference sources:
+{_BENCHMARK_SOURCES}"""
             import anthropic as _anthropic
             client = _anthropic.Anthropic(api_key=api_key)
             with st.spinner('Thinking...'):
                 msg = client.messages.create(
                     model='claude-sonnet-4-6',
-                    max_tokens=400,
+                    max_tokens=600,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
             st.session_state['insights_last'] = msg.content[0].text
@@ -2371,13 +2400,19 @@ REBALANCING OPTION:
 BEST ALLOCATION:
 [50–60 words giving a direct final recommendation on the optimal split, framed specifically for a {audience_type} {industry} brand running {', '.join(channels_in_use) if channels_in_use else 'these channels'}]
 
-Be direct. No bullet points within sections."""
+SOURCES:
+[List 2–3 of the most relevant URLs from the reference list below, copied exactly — do not modify or invent any URL]
+
+Be direct. No bullet points within sections.
+
+Reference sources:
+{_BENCHMARK_SOURCES}"""
             import anthropic as _anthropic
             client = _anthropic.Anthropic(api_key=api_key)
             with st.spinner('Thinking...'):
                 msg = client.messages.create(
                     model='claude-sonnet-4-6',
-                    max_tokens=500,
+                    max_tokens=700,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
             st.session_state['recs_last'] = msg.content[0].text
@@ -2386,15 +2421,23 @@ Be direct. No bullet points within sections."""
     if st.session_state.get('recs_last'):
         raw = st.session_state['recs_last']
         import re as _re
-        sections = _re.split(r'\n(CURRENT ALLOCATION|REBALANCING OPTION|BEST ALLOCATION):\n', raw)
+        sections = _re.split(r'\n(CURRENT ALLOCATION|REBALANCING OPTION|BEST ALLOCATION|SOURCES):\n', raw)
         if len(sections) > 1:
             labels = sections[1::2]
             bodies = sections[2::2]
-            colors = {'CURRENT ALLOCATION': '#437CA3', 'REBALANCING OPTION': '#437CA3', 'BEST ALLOCATION': '#1F6152'}
+            colors = {
+                'CURRENT ALLOCATION': '#437CA3',
+                'REBALANCING OPTION': '#437CA3',
+                'BEST ALLOCATION':    '#1F6152',
+                'SOURCES':            '#555555',
+            }
             for label, body in zip(labels, bodies):
                 color = colors.get(label, '#437CA3')
                 st.markdown(f'<div style="background:{color};color:white;padding:6px 10px;border-radius:4px;font-weight:bold;margin-top:8px">{label}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="background:#f2f2f2;padding:10px;border-radius:0 0 4px 4px;margin-bottom:4px">{body.strip()}</div>', unsafe_allow_html=True)
+                if label == 'SOURCES':
+                    st.markdown(body.strip())
+                else:
+                    st.markdown(f'<div style="background:#f2f2f2;padding:10px;border-radius:0 0 4px 4px;margin-bottom:4px">{body.strip()}</div>', unsafe_allow_html=True)
         else:
             st.markdown(raw)
 
@@ -2526,13 +2569,18 @@ Write a short explanation (150–180 words) covering:
 - Why CTR and View Rate vary between markets and channels — relate this to {audience_type} audience behaviour (e.g. professional vs consumer mindset, intent signals)
 - What Frequency means for brand recall in {industry}, and how it should be managed differently depending on whether the goal is awareness or conversion
 
-Write in plain English. No jargon. One paragraph per topic. Frame everything for someone who understands the {industry} business, not a media buyer."""
+Write in plain English. No jargon. One paragraph per topic. Frame everything for someone who understands the {industry} business, not a media buyer.
+
+After the explanation, add a 'Sources' section listing 2–4 of the most relevant URLs from the reference list below, copied exactly — do not modify or invent any URL.
+
+Reference sources:
+{_BENCHMARK_SOURCES}"""
             import anthropic as _anthropic
             client = _anthropic.Anthropic(api_key=api_key)
             with st.spinner('Thinking...'):
                 msg = client.messages.create(
                     model='claude-sonnet-4-6',
-                    max_tokens=400,
+                    max_tokens=600,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
             st.markdown(msg.content[0].text)
