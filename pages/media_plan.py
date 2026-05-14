@@ -410,7 +410,8 @@ def _duplicate_scenario(sid):
     st.session_state.scenario_names.append(st.session_state.scenario_names[sid] + ' (copy)')
     skip_prefixes = ('remove_', 'dup_', 'rename_', 'btn_', 'dl_', 'funnel_', 'grand_',
                      'preset_', 'eq_', 'cpm_eff_', 'grp_', 'tpl_', 'pacing_', 'bar_',
-                     'save_tpl_', 'del_tpl_', 'pin_', 'mkt_tog_')
+                     'save_tpl_', 'del_tpl_', 'pin_', 'mkt_tog_',
+                     'bud_mkt_', '_last_total_')
     pattern = _re.compile(rf'^(.+)_{sid}$')
     for k, v in list(st.session_state.items()):
         m = pattern.match(str(k))
@@ -440,6 +441,20 @@ def _apply_template_data(sid, tpl):
 
 def _apply_template(sid, tpl_name):
     _apply_template_data(sid, PLAN_TEMPLATES[tpl_name])
+
+
+def _sync_pct_to_bud(mkt, sid):
+    """on_change for % input — keeps the € input in sync."""
+    total = st.session_state.get(f'total_budget_{sid}', 0)
+    pct   = st.session_state.get(f'pct_{mkt}_{sid}', 0)
+    st.session_state[f'bud_mkt_{mkt}_{sid}'] = round(total * pct / 100)
+
+
+def _sync_bud_to_pct(mkt, sid):
+    """on_change for € input — keeps the % input in sync."""
+    total = st.session_state.get(f'total_budget_{sid}', 0)
+    bud   = st.session_state.get(f'bud_mkt_{mkt}_{sid}', 0)
+    st.session_state[f'pct_{mkt}_{sid}'] = round(bud / total * 100, 1) if total > 0 else 0.0
 
 
 def _current_as_template(sid):
@@ -737,6 +752,8 @@ _SKIP_KEYS = {
     'dup_', 'remove_', 'tpl_apply_', 'grp_', 'eq_', 'cpm_eff_',
     'pin_', 'dl_gads_', 'dl_excel', 'btn_', 'preset_',
     'save_tpl_', 'del_tpl_',
+    # derived / internal — recalculated on render, not worth saving
+    'bud_mkt_', '_last_total_',
     # AI chat state — ephemeral, don't persist across plan loads
     'bench_chat', 'insights_chat', 'recs_chat',
     'insights_last', 'recs_last',
@@ -1557,27 +1574,41 @@ def _render_scenario(sid):
                 st.session_state[f'pct_{m}_{sid}'] = round(weights[m] / total_w * 100, 1)
             st.session_state['_pending_dup_rerun'] = True
 
+        # Keep bud_mkt keys in sync when total budget changes or a new market appears
+        _last_key = f'_last_total_{sid}'
+        if st.session_state.get(_last_key) != s_budget:
+            for m in s_markets:
+                pct = st.session_state.get(f'pct_{m}_{sid}', default_pct)
+                st.session_state[f'bud_mkt_{m}_{sid}'] = round(s_budget * pct / 100)
+            st.session_state[_last_key] = s_budget
+        else:
+            for m in s_markets:
+                if f'bud_mkt_{m}_{sid}' not in st.session_state:
+                    pct = st.session_state.get(f'pct_{m}_{sid}', default_pct)
+                    st.session_state[f'bud_mkt_{m}_{sid}'] = round(s_budget * pct / 100)
+
         # Split inputs + donut side by side
         split_col, donut_col = st.columns([3, 2])
         with split_col:
-            st.markdown('**Market Split (%)**')
+            st.markdown('**Market Split**')
             per_row = min(n_mkts, 3)
             for row_start in range(0, n_mkts, per_row):
                 row_mkts = s_markets[row_start:row_start + per_row]
                 row_cols = st.columns(len(row_mkts) * 2)
                 for i, mkt in enumerate(row_mkts):
                     pct = row_cols[i * 2].number_input(
-                        f'{mkt}', min_value=0.0, max_value=100.0,
+                        f'{mkt} %', min_value=0.0, max_value=100.0,
                         value=default_pct, step=0.5, format='%.1f',
-                        key=f'pct_{mkt}_{sid}'
+                        key=f'pct_{mkt}_{sid}',
+                        on_change=_sync_pct_to_bud, args=(mkt, sid),
                     )
                     s_market_pcts[mkt] = pct
                     s_market_budgets[mkt] = s_budget * pct / 100
-                    row_cols[i * 2 + 1].markdown(
-                        f'<div style="font-size:0.78rem;color:#555;margin-top:4px">{mkt}</div>'
-                        f'<div style="font-size:0.9rem;font-weight:600;color:#1A1A1A">'
-                        f'€{s_market_budgets[mkt]:,.0f}</div>',
-                        unsafe_allow_html=True,
+                    row_cols[i * 2 + 1].number_input(
+                        f'{mkt} €', min_value=0, step=100, format='%d',
+                        value=st.session_state.get(f'bud_mkt_{mkt}_{sid}', 0),
+                        key=f'bud_mkt_{mkt}_{sid}',
+                        on_change=_sync_bud_to_pct, args=(mkt, sid),
                     )
             pct_sum = sum(s_market_pcts.values())
             if abs(pct_sum - 100) > 0.5:
@@ -1657,17 +1688,43 @@ def _render_scenario(sid):
             st.session_state['_pending_dup_rerun'] = True
 
         if is_expanded:
+            # Goal budget split — only shown when multiple goals are selected
+            goal_budgets = {}
+            if len(selected_goals) > 1:
+                default_goal_pct = round(100.0 / len(selected_goals), 1)
+                st.markdown('**Goal budget split**')
+                gcols = st.columns(len(selected_goals))
+                raw_pcts = {}
+                for gi, goal in enumerate(selected_goals):
+                    raw_pcts[goal] = gcols[gi].number_input(
+                        f'{goal} %', min_value=0.0, max_value=100.0,
+                        value=default_goal_pct, step=5.0, format='%.1f',
+                        key=f'goal_pct_{mkt}_{goal}_{sid}',
+                    )
+                pct_sum_g = sum(raw_pcts.values()) or 1
+                for gi, goal in enumerate(selected_goals):
+                    goal_budgets[goal] = mkt_budget * raw_pcts[goal] / pct_sum_g
+                    gcols[gi].markdown(
+                        f'<div style="font-size:0.85rem;font-weight:600;color:#2BB5A5">'
+                        f'€{goal_budgets[goal]:,.0f}</div>',
+                        unsafe_allow_html=True,
+                    )
+                if abs(sum(raw_pcts.values()) - 100) > 0.5:
+                    st.caption(f'Goal split sums to {sum(raw_pcts.values()):.1f}% — normalising proportionally.')
+            else:
+                goal_budgets[selected_goals[0]] = mkt_budget
+
             if len(selected_goals) > 1:
                 goal_tabs = st.tabs(selected_goals)
                 for tab, goal in zip(goal_tabs, selected_goals):
                     with tab:
                         goal_chs = goal_channels[goal]
-                        ch_budgets = _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid)
+                        ch_budgets = _channel_budget_split(mkt, goal, goal_chs, goal_budgets[goal], sid)
                         render_goal_section(mkt, goal, goal_chs, ch_budgets, periods, grand_totals, sid)
             else:
                 goal = selected_goals[0]
                 goal_chs = goal_channels[goal]
-                ch_budgets = _channel_budget_split(mkt, goal, goal_chs, mkt_budget, sid)
+                ch_budgets = _channel_budget_split(mkt, goal, goal_chs, goal_budgets[goal], sid)
                 render_goal_section(mkt, goal, goal_chs, ch_budgets, periods, grand_totals, sid)
 
             # Cache KPI totals for the pinned panel (available on next render)
