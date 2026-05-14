@@ -1784,6 +1784,7 @@ def _render_scenario(sid):
 
     return {
         'name': st.session_state.scenario_names[sid],
+        'sid': sid,
         'grand_totals': grand_totals,
         'goal_channels': goal_channels,
         'selected_markets': s_markets,
@@ -2060,29 +2061,72 @@ else:
 st.caption(f'Insights framed for **{audience_type}** · **{industry}**')
 
 def build_plan_summary():
-    """Compile a plain-text plan summary from the selected scenario's data."""
+    """Compile a plain-text plan summary from the selected scenario's data, using
+    the actual user-edited benchmark values from session state."""
     if not ai_data:
         return 'No scenario data available.'
-    d = ai_data
+    d   = ai_data
+    sid = d.get('sid', 0)
+    _is_pct = {'ctr', 'view_rate', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'}
+
+    def _ss_bench(key, mkt, ch, goal):
+        """Read a benchmark value from session state; fall back to BENCH default."""
+        raw = st.session_state.get(f'{key}_{mkt}_{ch}_{goal}_{sid}')
+        if raw is not None:
+            return raw / 100.0 if key in _is_pct else raw
+        return BENCH[mkt][ch].get(key)
+
     lines = [
         f'Campaign: {campaign_name}  ({d["name"]})',
         f'Audience: {audience_type}  |  Industry: {industry}',
         f'Flight: {start_date.strftime("%b %d, %Y")} – {end_date.strftime("%b %d, %Y")} ({(end_date - start_date).days + 1} days)',
         f'Total budget: €{d["grand_total_bud"]:,}',
-        f'Markets: {", ".join(MARKET_LABELS[m] for m in d["selected_markets"])}',
         '',
+        'Market budgets:',
     ]
+    n_goals = len(d['goal_channels'])
+    for mkt in d['selected_markets']:
+        mkt_bud = d['market_budgets'].get(mkt, 0)
+        mkt_pct = d['market_pcts'].get(mkt, 0)
+        lines.append(f'  {MARKET_LABELS[mkt]}: €{mkt_bud:,.0f} ({mkt_pct:.1f}%)')
+        if n_goals > 1:
+            for goal in d['goal_channels']:
+                gpct = st.session_state.get(f'goal_pct_{mkt}_{goal}_{sid}',
+                                            round(100.0 / n_goals, 1))
+                gbud = mkt_bud * gpct / 100
+                lines.append(f'    → {goal}: €{gbud:,.0f} ({gpct:.0f}%)')
+    lines.append('')
+
     for goal, chs in d['goal_channels'].items():
         lines.append(f'Goal: {goal}  |  Channels: {", ".join(chs)}')
         for ch in chs:
+            # Actual KPI totals
             rows = d['grand_totals'][goal][ch]
-            if not rows:
-                continue
-            gdf = pd.concat(rows, ignore_index=True)
-            grand = {col: gdf[col].sum() for col in ADDITIVE if col in gdf.columns}
-            parts = [f'{COL_FMT[col][0]}: {COL_FMT[col][1](grand[col])}'
-                     for col in ADDITIVE if col in grand and col in COL_FMT]
-            lines.append(f'  {ch}: {" | ".join(parts)}')
+            if rows:
+                gdf  = pd.concat(rows, ignore_index=True)
+                grand = {col: gdf[col].sum() for col in ADDITIVE if col in gdf.columns}
+                parts = [f'{COL_FMT[col][0]}: {COL_FMT[col][1](grand[col])}'
+                         for col in ADDITIVE if col in grand and col in COL_FMT]
+                lines.append(f'  {ch} KPIs: {" | ".join(parts)}')
+            # Actual benchmarks used (from session state, not hardcoded defaults)
+            bm_parts = []
+            if ch == 'Search':
+                cpc = _ss_bench('cpc', d['selected_markets'][0], ch, goal)
+                ctr = _ss_bench('ctr', d['selected_markets'][0], ch, goal)
+                if cpc: bm_parts.append(f'CPC €{cpc:.2f}')
+                if ctr: bm_parts.append(f'CTR {ctr*100:.1f}%')
+            else:
+                cpm  = _ss_bench('cpm', d['selected_markets'][0], ch, goal)
+                ctr  = _ss_bench('ctr', d['selected_markets'][0], ch, goal)
+                freq = _ss_bench('frequency', d['selected_markets'][0], ch, goal)
+                if cpm:  bm_parts.append(f'CPM €{cpm:.2f}')
+                if ctr:  bm_parts.append(f'CTR {ctr*100:.2f}%')
+                if freq: bm_parts.append(f'Frequency {freq:.1f}')
+                if ch == 'YouTube':
+                    vr = _ss_bench('view_rate', d['selected_markets'][0], ch, goal)
+                    if vr: bm_parts.append(f'View Rate {vr*100:.0f}%')
+            if bm_parts:
+                lines.append(f'  {ch} benchmarks (first market as reference): {", ".join(bm_parts)}')
         lines.append('')
     return '\n'.join(lines)
 
@@ -2314,17 +2358,42 @@ with ai_tab_benchmarks:
     st.caption('Plain-English explanations of the benchmark values used in this plan.')
 
     def _bench_context():
-        """Build a reusable benchmark context block for AI prompts."""
+        """Build a reusable benchmark context block for AI prompts.
+        Reads from session state (user-edited values) with BENCH as fallback."""
+        if not ai_data:
+            return [], []
+        sid = ai_data.get('sid', 0)
+        _is_pct = {'ctr', 'view_rate', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'}
+
+        def _get(key, mkt, ch, goal):
+            raw = st.session_state.get(f'{key}_{mkt}_{ch}_{goal}_{sid}')
+            if raw is not None:
+                return raw / 100.0 if key in _is_pct else raw
+            return BENCH[mkt][ch].get(key)
+
         bench_lines = []
-        for mkt in (ai_data['selected_markets'] if ai_data else []):
-            for goal, chs in (ai_data['goal_channels'].items() if ai_data else []):
+        for mkt in ai_data['selected_markets']:
+            for goal, chs in ai_data['goal_channels'].items():
                 for ch in chs:
                     b = BENCH[mkt][ch]
                     if ch == 'Search':
-                        bench_lines.append(f'{MARKET_LABELS[mkt]} / {ch}: CPC €{b["cpc"]:.2f}, CTR {b["ctr"]*100:.1f}%, Click→Session {b.get("click_to_session",0.85)*100:.0f}%')
+                        cpc = _get('cpc', mkt, ch, goal) or b.get('cpc', 0)
+                        ctr = _get('ctr', mkt, ch, goal) or b.get('ctr', 0)
+                        c2s = _get('click_to_session', mkt, ch, goal) or b.get('click_to_session', 0.85)
+                        bench_lines.append(
+                            f'{MARKET_LABELS[mkt]} / {ch} ({goal}): CPC €{cpc:.2f}, CTR {ctr*100:.1f}%, Click→Session {c2s*100:.0f}%'
+                        )
                     else:
-                        bench_lines.append(f'{MARKET_LABELS[mkt]} / {ch}: CPM €{b["cpm"]:.2f}, CTR {b["ctr"]*100:.2f}%, Freq {b.get("frequency",3.0):.1f}' + (f', View Rate {b.get("view_rate",0.31)*100:.0f}%' if ch == 'YouTube' else ''))
-        channels_in_use = sorted({ch for chs in (ai_data['goal_channels'].values() if ai_data else []) for ch in chs})
+                        cpm  = _get('cpm',       mkt, ch, goal) or b.get('cpm', 0)
+                        ctr  = _get('ctr',       mkt, ch, goal) or b.get('ctr', 0)
+                        freq = _get('frequency', mkt, ch, goal) or b.get('frequency', 3.0)
+                        line = f'{MARKET_LABELS[mkt]} / {ch} ({goal}): CPM €{cpm:.2f}, CTR {ctr*100:.2f}%, Freq {freq:.1f}'
+                        if ch == 'YouTube':
+                            vr = _get('view_rate', mkt, ch, goal) or b.get('view_rate', 0.31)
+                            line += f', View Rate {vr*100:.0f}%'
+                        bench_lines.append(line)
+
+        channels_in_use = sorted({ch for chs in ai_data['goal_channels'].values() for ch in chs})
         return bench_lines, channels_in_use
 
     if st.button('Generate Benchmark Explanations', key='btn_bench'):
