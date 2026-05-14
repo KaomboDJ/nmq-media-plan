@@ -2162,7 +2162,15 @@ if all_scenarios_data:
 else:
     ai_data = None
 
-st.caption(f'Insights framed for **{audience_type}** · **{industry}**')
+if ai_data:
+    _ai_channels = sorted({ch for chs in ai_data['goal_channels'].values() for ch in chs})
+    _ai_markets  = [MARKET_LABELS[m] for m in ai_data['selected_markets']]
+    st.caption(
+        f'Insights framed for **{audience_type}** · **{industry}** · '
+        f'{", ".join(_ai_channels)} · {", ".join(_ai_markets)}'
+    )
+else:
+    st.caption(f'Insights framed for **{audience_type}** · **{industry}**')
 
 def build_plan_summary():
     """Compile a plain-text plan summary from the selected scenario's data, using
