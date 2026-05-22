@@ -206,6 +206,8 @@ COL_FMT = {
     'form_completions':     ('Form Completions',       lambda x: f'{int(round(x)):,}'),
     'form_completion_rate': ('Form Completion %',      lambda x: f'{x*100:.1f}%'),
     'cost_per_send':        ('Cost per Send (€)',      lambda x: f'€{x:.4f}'),
+    'cost_per_open':        ('Cost per Open (€)',      lambda x: f'€{x:.4f}'),
+    'cta_ctr':              ('CTA CTR',                lambda x: f'{x*100:.2f}%'),
 }
 
 # Columns shown per (channel, goal), in the exact order the user specified.
@@ -227,13 +229,14 @@ PHASE_COLS = {
     ('LinkedIn', 'Awareness'):  ['Budget', 'impressions', 'reach', 'ctr', 'clicks', 'cpc'],
     ('LinkedIn', 'Traffic'):    _TRAFFIC_COLS,
     ('LinkedIn', 'Conversion'): _CONVERSION_COLS,
-    # LinkedIn Sponsored Message / Conversational Ad
-    ('LinkedIn_SM', 'Awareness'):  ['Budget', 'sends', 'opens', 'open_rate', 'cta_clicks'],
-    ('LinkedIn_SM', 'Traffic'):    ['Budget', 'sends', 'opens', 'open_rate', 'cta_clicks',
-                                    'click_to_session', 'sessions'],
-    ('LinkedIn_SM', 'Conversion'): ['Budget', 'sends', 'opens', 'open_rate', 'cta_clicks',
-                                    'click_to_session', 'sessions',
-                                    'conv_rate', 'conversions', 'cpa',
+    # LinkedIn Sponsored Message / Conversational Ad — no sessions, all within LinkedIn
+    ('LinkedIn_SM', 'Awareness'):  ['Budget', 'sends', 'cost_per_send', 'opens', 'cost_per_open',
+                                    'open_rate', 'cta_clicks', 'ctr'],
+    ('LinkedIn_SM', 'Traffic'):    ['Budget', 'sends', 'cost_per_send', 'opens', 'cost_per_open',
+                                    'open_rate', 'cta_clicks', 'ctr'],
+    ('LinkedIn_SM', 'Conversion'): ['Budget', 'sends', 'cost_per_send', 'opens', 'cost_per_open',
+                                    'open_rate', 'cta_clicks', 'ctr',
+                                    'conversions', 'cpa',
                                     'lead_to_mql', 'mql', 'cost_per_mql',
                                     'mql_to_sql', 'sql', 'cost_per_sql'],
     # LinkedIn Lead Gen Form
@@ -314,30 +317,31 @@ def calc_row(budget, bm, goal, channel, conv_rate):
             r['cost_per_sql'] = budget / sql if sql > 0 else 0
 
     elif channel == 'LinkedIn' and bm.get('_li_format') == 'Sponsored Message / Conversational Ad':
-        cps       = bm.get('cpm', 0.50)    # repurposed: cost per send
+        # Everything stays inside LinkedIn — no sessions metric
+        cps       = bm.get('cpm', 0.50)    # repurposed field: cost per send
         open_rate = bm.get('open_rate', 0.30)
-        cta_ctr   = bm.get('ctr', 0.10)    # % of opens that click CTA
-        c2s       = bm.get('click_to_session', 0.82)
+        cta_ctr   = bm.get('ctr', 0.10)    # CTA click rate out of opens
         if cps <= 0:
             return r
-        sends     = budget / cps
-        opens     = sends * open_rate
+        sends      = budget / cps
+        opens      = sends * open_rate
         cta_clicks = opens * cta_ctr
         r.update({
-            'sends':     sends,
-            'opens':     opens,
-            'open_rate': open_rate,
-            'cta_clicks': cta_clicks,
-            'ctr':       cta_ctr,
+            'sends':         sends,
+            'cost_per_send': cps,
+            'opens':         opens,
+            'cost_per_open': budget / opens if opens > 0 else 0,
+            'open_rate':     open_rate,
+            'cta_clicks':    cta_clicks,
+            'ctr':           cta_ctr,
         })
-        if goal in ('Traffic', 'Conversion'):
-            r['sessions']         = cta_clicks * c2s
-            r['click_to_session'] = c2s
         if goal == 'Conversion':
-            convs = r['sessions'] * conv_rate
+            # Leads come directly from CTA clicks — no session step
+            c2l = bm.get('conv_rate', 0.05)  # CTA click → lead rate
+            convs = cta_clicks * c2l
             r['conversions'] = convs
+            r['conv_rate']   = c2l
             r['cpa']         = budget / convs if convs > 0 else 0
-            r['conv_rate']   = conv_rate
             l2m = bm.get('lead_to_mql', 0.20)
             m2s = bm.get('mql_to_sql',  0.30)
             mql = convs * l2m
@@ -475,13 +479,11 @@ def make_funnel(df, goal, channel, title, li_format=None):
         else:
             stages = [('Impressions', 'impressions'), ('Clicks', 'clicks'), ('Sessions', 'sessions'), ('Conversions', 'conversions')]
     elif channel == 'LinkedIn' and li_format == 'Sponsored Message / Conversational Ad':
-        if goal == 'Awareness':
-            stages = [('Sends', 'sends'), ('Opens', 'opens'), ('CTA Clicks', 'cta_clicks')]
-        elif goal == 'Traffic':
-            stages = [('Sends', 'sends'), ('Opens', 'opens'), ('CTA Clicks', 'cta_clicks'), ('Sessions', 'sessions')]
-        else:
+        if goal == 'Conversion':
             stages = [('Sends', 'sends'), ('Opens', 'opens'), ('CTA Clicks', 'cta_clicks'),
-                      ('Sessions', 'sessions'), ('Leads', 'conversions'), ('MQLs', 'mql'), ('SQLs', 'sql')]
+                      ('Leads', 'conversions'), ('MQLs', 'mql'), ('SQLs', 'sql')]
+        else:
+            stages = [('Sends', 'sends'), ('Opens', 'opens'), ('CTA Clicks', 'cta_clicks')]
     elif channel == 'LinkedIn' and li_format == 'Lead Gen Form':
         if goal == 'Conversion':
             stages = [('Impressions', 'impressions'), ('Clicks', 'clicks'),
@@ -610,11 +612,10 @@ def _apply_bench_preset(ch, mkt, goal, sid, preset_name, li_fmt=None):
         ]
     elif ch == 'LinkedIn' and li_fmt == 'Sponsored Message / Conversational Ad':
         keys = [
-            (f'cpm_{mkt}_{ch}_{goal}_{sid}',              round(b['cpm'] * f['cpm'] * 0.05, 3)),  # cost per send is ~5% of CPM
-            (f'open_rate_{mkt}_{ch}_{goal}_{sid}',        30.0 * f.get('ctr', 1.0)),
-            (f'ctr_{mkt}_{ch}_{goal}_{sid}',              round(b['ctr'] * 100 * f['ctr'], 2)),
-            (f'click_to_session_{mkt}_{ch}_{goal}_{sid}', round(b.get('click_to_session', 0.82) * 100, 0)),
-            (f'conv_rate_{mkt}_{ch}_{goal}_{sid}',        round(b.get('conv_rate', 0.02) * 100 * f['conv_rate'], 1)),
+            (f'cpm_{mkt}_{ch}_{goal}_{sid}',       round(b['cpm'] * f['cpm'] * 0.05, 3)),  # cost per send ~5% of CPM
+            (f'open_rate_{mkt}_{ch}_{goal}_{sid}', round(30.0 * f.get('ctr', 1.0), 1)),
+            (f'ctr_{mkt}_{ch}_{goal}_{sid}',       round(b['ctr'] * 100 * f['ctr'], 2)),
+            (f'conv_rate_{mkt}_{ch}_{goal}_{sid}', round(5.0 * f['conv_rate'], 1)),  # CTA click→lead
         ]
     elif ch == 'LinkedIn' and li_fmt == 'Lead Gen Form':
         keys = [
@@ -643,8 +644,8 @@ _BENCH_FIELDS = {
     ('LinkedIn',      'Traffic'):    ['cpm', 'ctr', 'click_to_session'],
     ('LinkedIn',      'Conversion'): ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
     ('LinkedIn_SM',   'Awareness'):  ['cpm', 'open_rate', 'ctr'],
-    ('LinkedIn_SM',   'Traffic'):    ['cpm', 'open_rate', 'ctr', 'click_to_session'],
-    ('LinkedIn_SM',   'Conversion'): ['cpm', 'open_rate', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+    ('LinkedIn_SM',   'Traffic'):    ['cpm', 'open_rate', 'ctr'],
+    ('LinkedIn_SM',   'Conversion'): ['cpm', 'open_rate', 'ctr', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
     ('LinkedIn_LGF',  'Awareness'):  ['cpm', 'ctr', 'form_completion_rate'],
     ('LinkedIn_LGF',  'Traffic'):    ['cpm', 'ctr', 'form_completion_rate'],
     ('LinkedIn_LGF',  'Conversion'): ['cpm', 'ctr', 'form_completion_rate', 'lead_to_mql', 'mql_to_sql'],
@@ -928,16 +929,15 @@ def benchmark_inputs(ch, mkt, goal, sid=0):
     elif ch == 'LinkedIn':
         if li_fmt == 'Sponsored Message / Conversational Ad':
             fields = [
-                ('cpm',              'Cost per Send (€)',  b.get('cpm', 0.50),                   0.01, '%.3f', False),
-                ('open_rate',        'Open Rate %',        30.0,                                  0.5,  '%.1f', True),
-                ('ctr',              'CTR (CTA click) %',  b['ctr'] * 100,                        0.1,  '%.2f', True),
-                ('click_to_session', 'Click→Session %',    b.get('click_to_session', 0.82) * 100, 1.0,  '%.0f', True),
+                ('cpm',       'Cost per Send (€)', b.get('cpm', 0.50), 0.01, '%.3f', False),
+                ('open_rate', 'Open Rate %',        30.0,               0.5,  '%.1f', True),
+                ('ctr',       'CTA Click Rate %',   b['ctr'] * 100,     0.1,  '%.2f', True),
             ]
             if goal == 'Conversion':
                 fields += [
-                    ('conv_rate',   'Session→Lead %', b.get('conv_rate',   0.02) * 100, 0.1, '%.1f', True),
-                    ('lead_to_mql', 'Lead→MQL %',     b.get('lead_to_mql', 0.20) * 100, 1.0, '%.0f', True),
-                    ('mql_to_sql',  'MQL→SQL %',      b.get('mql_to_sql',  0.30) * 100, 1.0, '%.0f', True),
+                    ('conv_rate',   'CTA Click→Lead %', 5.0,                              0.1, '%.1f', True),
+                    ('lead_to_mql', 'Lead→MQL %',       b.get('lead_to_mql', 0.20) * 100, 1.0, '%.0f', True),
+                    ('mql_to_sql',  'MQL→SQL %',        b.get('mql_to_sql',  0.30) * 100, 1.0, '%.0f', True),
                 ]
         elif li_fmt == 'Lead Gen Form':
             fields = [
