@@ -1161,13 +1161,29 @@ def _get_bm_ss(ch, mkt, goal, sid):
                                  if goal == 'Awareness' else b.get('view_rate', 0.31))
         bm['click_to_session']= _pct('click_to_session',b.get('click_to_session', 0.80))
         bm['conv_rate']       = _pct('conv_rate',       b.get('conv_rate', 0.02))
-    else:  # LinkedIn / Display
-        c2s_default = b.get('click_to_session', 0.70 if ch == 'Display' else 0.82)
-        freq_default = b.get('frequency', 4.0 if ch == 'Display' else 3.0)
+    elif ch == 'LinkedIn':
+        li_fmt = ss.get(f'li_fmt_{mkt}_{goal}_{sid}', _LI_FORMATS[0])
+        bm['_li_format'] = li_fmt
+        if li_fmt == 'Sponsored Message / Conversational Ad':
+            bm['cpm']       = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b.get('cpm', 0.50))
+            bm['open_rate'] = _pct('open_rate', 0.30)
+            bm['ctr']       = _pct('ctr', b['ctr'])
+            bm['conv_rate'] = _pct('conv_rate', 0.05)
+        elif li_fmt == 'Lead Gen Form':
+            bm['cpm']                  = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
+            bm['ctr']                  = _pct('ctr', b['ctr'])
+            bm['form_completion_rate'] = _pct('form_completion_rate', 0.10)
+        else:  # Standard (Static / Video / Carousel)
+            bm['cpm']             = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
+            bm['ctr']             = _pct('ctr', b['ctr'])
+            bm['frequency']       = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 3.0))
+            bm['click_to_session']= _pct('click_to_session', b.get('click_to_session', 0.82))
+            bm['conv_rate']       = _pct('conv_rate', b.get('conv_rate', 0.02))
+    else:  # Display
         bm['cpm']             = ss.get(f'cpm_{mkt}_{ch}_{goal}_{sid}', b['cpm'])
         bm['ctr']             = _pct('ctr',             b['ctr'])
-        bm['frequency']       = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', freq_default)
-        bm['click_to_session']= _pct('click_to_session', c2s_default)
+        bm['frequency']       = ss.get(f'frequency_{mkt}_{ch}_{goal}_{sid}', b.get('frequency', 4.0))
+        bm['click_to_session']= _pct('click_to_session', b.get('click_to_session', 0.70))
         bm['conv_rate']       = _pct('conv_rate',       b.get('conv_rate', 0.02))
 
     # MQL/SQL ratios — present for all channels when goal is Conversion
@@ -1219,18 +1235,35 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
     AL = Alignment(horizontal='left',   vertical='center')
 
     _PCT_KEYS  = {'ctr', 'view_rate', 'click_to_session', 'conv_rate',
-                  'lead_to_mql', 'mql_to_sql', 'cvr'}
+                  'lead_to_mql', 'mql_to_sql', 'cvr',
+                  'open_rate', 'form_completion_rate'}
     _EUR_KEYS  = {'Budget', 'cpc', 'cpa', 'cpv', 'eff_cpm',
-                  'cost_per_mql', 'cost_per_sql'}
+                  'cost_per_mql', 'cost_per_sql',
+                  'cost_per_send', 'cost_per_open'}
     _ADDITIVE  = {'Budget', 'impressions', 'reach', 'views', 'clicks',
-                  'sessions', 'conversions', 'mql', 'sql'}
-    # Rate cols whose scenario-total value is derived from the summed additive cols
+                  'sessions', 'conversions', 'mql', 'sql',
+                  'sends', 'opens', 'cta_clicks', 'form_completions'}
+    # Rate cols whose scenario-total value is derived from summed additive cols (standard path)
     _RATE_FROM = {
         'ctr':              ('clicks',      'impressions'),
         'click_to_session': ('sessions',    'clicks'),
         'conv_rate':        ('conversions', 'sessions'),
         'lead_to_mql':      ('mql',         'conversions'),
         'mql_to_sql':       ('sql',         'mql'),
+    }
+    # Format-specific rate derivations for scenario totals
+    _RATE_FROM_SM = {
+        'open_rate':  ('opens',       'sends'),
+        'ctr':        ('cta_clicks',  'opens'),
+        'conv_rate':  ('conversions', 'cta_clicks'),
+        'lead_to_mql':('mql',         'conversions'),
+        'mql_to_sql': ('sql',         'mql'),
+    }
+    _RATE_FROM_LGF = {
+        'ctr':                  ('clicks',          'impressions'),
+        'form_completion_rate': ('form_completions', 'clicks'),
+        'lead_to_mql':          ('mql',              'form_completions'),
+        'mql_to_sql':           ('sql',              'mql'),
     }
 
     def _num_fmt(key):
@@ -1239,36 +1272,85 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
         return '#,##0'
 
     _BM_PARAMS = {
-        ('YouTube',  'Awareness'):   ['cpm', 'view_rate', 'ctr', 'frequency'],
-        ('YouTube',  'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
-        ('YouTube',  'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
-        ('LinkedIn', 'Awareness'):   ['cpm', 'ctr', 'frequency'],
-        ('LinkedIn', 'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
-        ('LinkedIn', 'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
-        ('Search',   'Awareness'):   ['cpc', 'ctr'],
-        ('Search',   'Traffic'):     ['cpc', 'ctr', 'click_to_session'],
-        ('Search',   'Conversion'):  ['cpc', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
-        ('Display',  'Awareness'):   ['cpm', 'ctr', 'frequency'],
-        ('Display',  'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
-        ('Display',  'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('YouTube',       'Awareness'):   ['cpm', 'view_rate', 'ctr', 'frequency'],
+        ('YouTube',       'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
+        ('YouTube',       'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('LinkedIn',      'Awareness'):   ['cpm', 'ctr', 'frequency'],
+        ('LinkedIn',      'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
+        ('LinkedIn',      'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('LinkedIn_SM',   'Awareness'):   ['cpm', 'open_rate', 'ctr'],
+        ('LinkedIn_SM',   'Traffic'):     ['cpm', 'open_rate', 'ctr'],
+        ('LinkedIn_SM',   'Conversion'):  ['cpm', 'open_rate', 'ctr', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('LinkedIn_LGF',  'Awareness'):   ['cpm', 'ctr', 'form_completion_rate'],
+        ('LinkedIn_LGF',  'Traffic'):     ['cpm', 'ctr', 'form_completion_rate'],
+        ('LinkedIn_LGF',  'Conversion'):  ['cpm', 'ctr', 'form_completion_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('Search',        'Awareness'):   ['cpc', 'ctr'],
+        ('Search',        'Traffic'):     ['cpc', 'ctr', 'click_to_session'],
+        ('Search',        'Conversion'):  ['cpc', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
+        ('Display',       'Awareness'):   ['cpm', 'ctr', 'frequency'],
+        ('Display',       'Traffic'):     ['cpm', 'ctr', 'click_to_session'],
+        ('Display',       'Conversion'):  ['cpm', 'ctr', 'click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'],
     }
     _BM_LABELS = {
-        'cpm': 'CPM (€)', 'cpc': 'CPC (€)', 'view_rate': 'View Rate',
-        'ctr': 'CTR', 'frequency': 'Frequency', 'click_to_session': 'Click→Session',
-        'conv_rate': 'Session→Lead %', 'lead_to_mql': 'Lead→MQL %', 'mql_to_sql': 'MQL→SQL %',
+        'cpm': 'CPM / Cost per Send (€)', 'cpc': 'CPC (€)', 'view_rate': 'View Rate',
+        'ctr': 'CTR / CTA Click Rate', 'frequency': 'Frequency',
+        'click_to_session': 'Click→Session', 'open_rate': 'Open Rate',
+        'form_completion_rate': 'Form Completion Rate',
+        'conv_rate': 'Session→Lead % / CTA→Lead %',
+        'lead_to_mql': 'Lead→MQL %', 'mql_to_sql': 'MQL→SQL %',
     }
     _BM_NUM_FMT = {
-        'cpm': '#,##0.00', 'cpc': '#,##0.00', 'view_rate': '0.00%',
+        'cpm': '#,##0.0000', 'cpc': '#,##0.00', 'view_rate': '0.00%',
         'ctr': '0.00%', 'frequency': '0.0', 'click_to_session': '0%',
+        'open_rate': '0.0%', 'form_completion_rate': '0.0%',
         'conv_rate': '0.00%', 'lead_to_mql': '0%', 'mql_to_sql': '0%',
     }
 
-    def _formula(key, r, col_map, bm_map, ch):
+    def _formula(key, r, col_map, bm_map, ch, li_fmt=None):
         L = col_map
         def ref(k):   return f"{L.get(k,'A')}{r}"
         def bm(k):    return bm_map.get(k, '0')
         def ie(f):    return f'=IFERROR({f},"")'
+
         if key == 'Budget':       return None
+
+        # ── LinkedIn Sponsored Message ─────────────────────────────────────────
+        if ch == 'LinkedIn' and li_fmt == 'Sponsored Message / Conversational Ad':
+            if key == 'sends':            return ie(f"{ref('Budget')}/{bm('cpm')}")
+            if key == 'cost_per_send':    return ie(f"{ref('Budget')}/{ref('sends')}")
+            if key == 'opens':            return ie(f"{ref('sends')}*{bm('open_rate')}")
+            if key == 'cost_per_open':    return ie(f"{ref('Budget')}/{ref('opens')}")
+            if key == 'open_rate':        return f"={bm('open_rate')}"
+            if key == 'cta_clicks':       return ie(f"{ref('opens')}*{bm('ctr')}")
+            if key == 'ctr':              return ie(f"{ref('cta_clicks')}/{ref('opens')}")
+            if key == 'conv_rate':        return f"={bm('conv_rate')}"
+            if key == 'conversions':      return ie(f"{ref('cta_clicks')}*{bm('conv_rate')}")
+            if key == 'cpa':              return ie(f"{ref('Budget')}/{ref('conversions')}")
+            if key == 'lead_to_mql':      return f"={bm('lead_to_mql')}"
+            if key == 'mql':              return ie(f"{ref('conversions')}*{bm('lead_to_mql')}")
+            if key == 'cost_per_mql':     return ie(f"{ref('Budget')}/{ref('mql')}")
+            if key == 'mql_to_sql':       return f"={bm('mql_to_sql')}"
+            if key == 'sql':              return ie(f"{ref('mql')}*{bm('mql_to_sql')}")
+            if key == 'cost_per_sql':     return ie(f"{ref('Budget')}/{ref('sql')}")
+            return None
+
+        # ── LinkedIn Lead Gen Form ─────────────────────────────────────────────
+        if ch == 'LinkedIn' and li_fmt == 'Lead Gen Form':
+            if key == 'impressions':          return ie(f"{ref('Budget')}/{bm('cpm')}*1000")
+            if key == 'eff_cpm':              return ie(f"{ref('Budget')}/{ref('impressions')}*1000")
+            if key == 'clicks':               return ie(f"{ref('impressions')}*{bm('ctr')}")
+            if key == 'ctr':                  return ie(f"{ref('clicks')}/{ref('impressions')}")
+            if key == 'form_completions':     return ie(f"{ref('clicks')}*{bm('form_completion_rate')}")
+            if key == 'form_completion_rate': return f"={bm('form_completion_rate')}"
+            if key == 'lead_to_mql':          return f"={bm('lead_to_mql')}"
+            if key == 'mql':                  return ie(f"{ref('form_completions')}*{bm('lead_to_mql')}")
+            if key == 'cost_per_mql':         return ie(f"{ref('Budget')}/{ref('mql')}")
+            if key == 'mql_to_sql':           return f"={bm('mql_to_sql')}"
+            if key == 'sql':                  return ie(f"{ref('mql')}*{bm('mql_to_sql')}")
+            if key == 'cost_per_sql':         return ie(f"{ref('Budget')}/{ref('sql')}")
+            return None
+
+        # ── Standard path (all other channels + LinkedIn Standard) ────────────
         if key == 'impressions':
             return ie(f"{ref('clicks')}/{bm('ctr')}") if ch == 'Search' \
                    else ie(f"{ref('Budget')}/{bm('cpm')}*1000")
@@ -1294,13 +1376,24 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
         if key == 'cost_per_sql': return ie(f"{ref('Budget')}/{ref('sql')}")
         return None
 
-    def _total_formula(key, r, col_map, bm_map, first_r, last_r, ch):
+    def _total_formula(key, r, col_map, bm_map, first_r, last_r, ch, li_fmt=None):
         L = col_map
         if key in _ADDITIVE:
             return f"=SUM({L.get(key,'A')}{first_r}:{L.get(key,'A')}{last_r})"
-        if key in ('click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql'):
-            return f"={bm_map.get(key, '0')}"
-        return _formula(key, r, col_map, bm_map, ch)
+        # Rate fields that should reference the assumption cell, not be re-derived
+        _rate_keys_sm  = ('open_rate', 'conv_rate', 'lead_to_mql', 'mql_to_sql')
+        _rate_keys_lgf = ('form_completion_rate', 'lead_to_mql', 'mql_to_sql')
+        _rate_keys_std = ('click_to_session', 'conv_rate', 'lead_to_mql', 'mql_to_sql')
+        if ch == 'LinkedIn' and li_fmt == 'Sponsored Message / Conversational Ad':
+            if key in _rate_keys_sm:
+                return f"={bm_map.get(key, '0')}"
+        elif ch == 'LinkedIn' and li_fmt == 'Lead Gen Form':
+            if key in _rate_keys_lgf:
+                return f"={bm_map.get(key, '0')}"
+        else:
+            if key in _rate_keys_std:
+                return f"={bm_map.get(key, '0')}"
+        return _formula(key, r, col_map, bm_map, ch, li_fmt=li_fmt)
 
     # ── Setup ─────────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
@@ -1368,14 +1461,28 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                 for ch in goal_chs:
                     ch_bud    = ch_budgets.get(ch, 0)
                     bm_data   = _get_bm_ss(ch, mkt, goal, sid)
-                    col_keys  = PHASE_COLS.get((ch, goal), list(_TRAFFIC_COLS))
+                    li_fmt    = bm_data.get('_li_format') if ch == 'LinkedIn' else None
+
+                    # Resolve format-specific PHASE_COLS key for LinkedIn
+                    if ch == 'LinkedIn' and li_fmt == 'Sponsored Message / Conversational Ad':
+                        phase_key = ('LinkedIn_SM', goal)
+                        bm_params_key = ('LinkedIn_SM', goal)
+                    elif ch == 'LinkedIn' and li_fmt == 'Lead Gen Form':
+                        phase_key = ('LinkedIn_LGF', goal)
+                        bm_params_key = ('LinkedIn_LGF', goal)
+                    else:
+                        phase_key = (ch, goal)
+                        bm_params_key = (ch, goal)
+
+                    col_keys  = PHASE_COLS.get(phase_key, list(_TRAFFIC_COLS))
                     n_ch_cols = len(col_keys) + 1
                     col_map   = {key: get_column_letter(2 + i) for i, key in enumerate(col_keys)}
                     daily_bud = ch_bud / total_days if total_days else 0
 
                     # Channel sub-header
+                    ch_label = f'{ch} ({li_fmt})' if li_fmt else ch
                     c = ws.cell(row=row, column=1,
-                                value=f"{ch}     Daily Budget: €{daily_bud:,.2f} / day")
+                                value=f"{ch_label}     Daily Budget: €{daily_bud:,.2f} / day")
                     c.fill = C_CH; c.font = F_WHITE_B
                     c.alignment = Alignment(horizontal='center', vertical='center')
                     ws.merge_cells(start_row=row, start_column=1,
@@ -1384,7 +1491,7 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                     row += 1
 
                     # Assumptions block
-                    bm_params = _BM_PARAMS.get((ch, goal), [])
+                    bm_params = _BM_PARAMS.get(bm_params_key, [])
                     c = ws.cell(row=row, column=1,
                                 value='ASSUMPTIONS  —  edit the yellow cells to recalculate the whole table')
                     c.fill = C_ASSM_H; c.font = Font(italic=True, size=9, color='375623')
@@ -1432,7 +1539,7 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                             if key == 'Budget':
                                 c = ws.cell(row=row, column=ci, value=bud)
                             else:
-                                f = _formula(key, row, col_map, bm_map, ch)
+                                f = _formula(key, row, col_map, bm_map, ch, li_fmt=li_fmt)
                                 c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
                             c.fill = fill; c.font = F_NORMAL; c.alignment = AC
                             c.number_format = _num_fmt(key)
@@ -1445,7 +1552,7 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                     c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
                     for ci, key in enumerate(col_keys, 2):
                         f = _total_formula(key, row, col_map, bm_map,
-                                           first_data_row, last_data_row, ch)
+                                           first_data_row, last_data_row, ch, li_fmt=li_fmt)
                         c = ws.cell(row=row, column=ci, value=f if f is not None else 0)
                         c.fill = C_TOTAL; c.font = F_BOLD; c.alignment = AC
                         c.number_format = _num_fmt(key)
@@ -1454,7 +1561,8 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
 
                     k = (goal, ch)
                     if k not in total_tracker:
-                        total_tracker[k] = {'rows': [], 'col_keys': col_keys, 'col_map': col_map}
+                        total_tracker[k] = {'rows': [], 'col_keys': col_keys, 'col_map': col_map,
+                                            'li_fmt': li_fmt}
                     total_tracker[k]['rows'].append(total_row_num)
 
                 row += 1  # blank between goals
@@ -1483,14 +1591,24 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                 k = (goal, ch)
                 if k not in total_tracker:
                     continue
-                tr    = total_tracker[k]
-                ckeys = tr['col_keys']
-                cmap  = tr['col_map']
-                trows = tr['rows']
+                tr      = total_tracker[k]
+                ckeys   = tr['col_keys']
+                cmap    = tr['col_map']
+                trows   = tr['rows']
+                li_fmt  = tr.get('li_fmt')
                 n_ch_cols = len(ckeys) + 1
 
+                # Choose the right rate derivation map for this format
+                if ch == 'LinkedIn' and li_fmt == 'Sponsored Message / Conversational Ad':
+                    rate_from = _RATE_FROM_SM
+                elif ch == 'LinkedIn' and li_fmt == 'Lead Gen Form':
+                    rate_from = _RATE_FROM_LGF
+                else:
+                    rate_from = _RATE_FROM
+
                 # Channel header (no daily budget — this is the aggregate)
-                c = ws.cell(row=row, column=1, value=f"{ch}  —  All Countries Combined")
+                ch_label = f'{ch} ({li_fmt})' if li_fmt else ch
+                c = ws.cell(row=row, column=1, value=f"{ch_label}  —  All Countries Combined")
                 c.fill = C_CH; c.font = F_WHITE_B
                 c.alignment = Alignment(horizontal='center', vertical='center')
                 ws.merge_cells(start_row=row, start_column=1,
@@ -1516,16 +1634,15 @@ def _build_excel_all(all_scenarios, scenario_ids, campaign_name, start_date, end
                     if key in _ADDITIVE:
                         refs = ', '.join(f'{col_letter}{r}' for r in trows)
                         f = f'=IFERROR(SUM({refs}),"")'
-                    elif key in _RATE_FROM:
-                        nk, dk = _RATE_FROM[key]
+                    elif key in rate_from:
+                        nk, dk = rate_from[key]
                         if nk in cmap and dk in cmap:
                             f = f'=IFERROR({cmap[nk]}{row}/{cmap[dk]}{row},"")'
                         else:
                             f = ''
                     else:
-                        # derived (eff_cpm, cpc, cpv, cpa, cost_per_mql, cost_per_sql)
-                        # reference same row's additive cells — bm_map not needed
-                        f = _formula(key, row, cmap, {}, ch)
+                        # derived cost fields — reference same row's additive cells
+                        f = _formula(key, row, cmap, {}, ch, li_fmt=li_fmt)
                     c = ws.cell(row=row, column=ci, value=f if f else '')
                     c.fill = C_STOT; c.font = F_BOLD; c.alignment = AC
                     c.number_format = _num_fmt(key)
